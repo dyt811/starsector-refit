@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starsector Refit Viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">STARSECTOR <span>REFIT VIEWER</span></div>
+  <div class="topmeta">
+    <span id="data-version"></span>
+    <label class="tgl"><input type="checkbox" id="tgl-arcs" checked> Arcs</label>
+    <label class="tgl"><input type="checkbox" id="tgl-sprites" checked> Sprites</label>
+    <label class="tgl"><input type="checkbox" id="tgl-labels"> Labels</label>
+  </div>
+</header>
+
+<div id="layout">
+  <aside id="shiplist-panel">
+    <input id="ship-search" type="search" placeholder="Search ships..." autocomplete="off">
+    <div id="size-chips">
+      <button data-size="ALL" class="chip active">All</button>
+      <button data-size="FRIGATE" class="chip">Frigate</button>
+      <button data-size="DESTROYER" class="chip">Destroyer</button>
+      <button data-size="CRUISER" class="chip">Cruiser</button>
+      <button data-size="CAPITAL_SHIP" class="chip">Capital</button>
+      <button data-size="FIGHTER" class="chip">Fighter</button>
+    </div>
+    <div id="ship-list"></div>
+  </aside>
+
+  <main id="stage">
+    <canvas id="canvas"></canvas>
+    <div id="tooltip" hidden></div>
+    <div id="stage-hint">Click a slot to fit a weapon. Scroll-free, everything is local.</div>
+  </main>
+
+  <aside id="panel">
+    <div id="panel-content"></div>
+  </aside>
+</div>
+
+<footer id="footer">
+  Unofficial fan project — Starsector © Fractal Softworks. Not affiliated with or endorsed by
+  Fractal Softworks. All game data and art belong to their respective owners.
+  <span id="footer-version"></span>
+</footer>
+
+<div id="load-error" hidden>
+  <div class="load-card">
+    <h2>Could not load data.json</h2>
+    <p>Browsers block <code>fetch()</code> of local files from <code>file://</code> pages.
+       Either serve this folder over HTTP (<code>python3 -m http.server</code>) or pick the
+       data file manually:</p>
+    <input type="file" id="data-file-picker" accept=".json,application/json">
+  </div>
+</div>
+
+<input type="file" id="import-picker" accept=".json,.variant,application/json" hidden>
+<script src="app.js"></script>
+</body>
+</html>
