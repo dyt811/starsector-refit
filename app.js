@@ -55,6 +55,8 @@ const S = {
   shipSearch: "",
   weaponSearch: "",
   weaponSort: "op",
+  weaponSizeFilter: "ALL",   // weapon picker size chips (ALL/SMALL/MEDIUM/LARGE)
+  fleet: null,               // parsed save fleet — session only, never persisted
   show: { ranges: "selected", sprites: true, labels: false },
   cam: { z: 1, px: 0, py: 0 },   // zoom/pan over the fit transform
   shipImg: null,          // HTMLImageElement | null
@@ -219,7 +221,7 @@ function freshBuild(ship) {
   return {
     hullId: ship.id, name: "",
     weapons: { ...ship.builtInWeapons },   // built-ins pre-fitted & locked
-    vents: 0, caps: 0, hullMods: [...(ship.builtInMods || [])],
+    vents: 0, caps: 0, hullMods: [...(ship.builtInMods || [])], smods: [],
     wings: Array.from({ length: bayCount(ship) }, (_, i) => (ship.builtInWings || [])[i] || null),
   };
 }
@@ -233,7 +235,7 @@ function selectShip(shipId, savedBuild) {
   resetCam();
   S.shipImg = null;
   S.build = savedBuild && savedBuild.hullId === shipId
-    ? { name: "", vents: 0, caps: 0, hullMods: [], ...savedBuild }
+    ? { name: "", vents: 0, caps: 0, hullMods: [], smods: [], ...savedBuild }
     : freshBuild(ship);
   // normalize fighter wings against this hull's bays: built-in bays are
   // forced to the built-in wing (locked); other bays keep valid saved picks
@@ -288,32 +290,37 @@ async function ensureWeaponImage(weaponId, slot) {
 }
 
 // ---------------------------------------------------------------- OP / flux
-function opBreakdown() {
-  const sh = ship();
+// Parameterized so the save-import fleet view can cost out a member's real
+// build without loading it into the editor. S-mods (build.smods, from a
+// variant's permaMods) cost no OP, like built-ins.
+function opBreakdownFor(sh, b) {
+  const lockedSlots = sh.builtInWeapons || {};
   let weapons = 0;
   for (const slot of sh.slots) {
-    const wid = S.build.weapons[slot.id];
-    if (wid && !isLocked(slot.id)) weapons += (S.data.weapons[wid] || {}).op || 0;
+    const wid = (b.weapons || {})[slot.id];
+    if (wid && !(slot.id in lockedSlots)) weapons += (S.data.weapons[wid] || {}).op || 0;
   }
   let hullmods = 0;
-  for (const mid of S.build.hullMods) {
-    if ((sh.builtInMods || []).includes(mid)) continue;   // built-ins cost no OP
+  const smods = new Set(b.smods || []);
+  for (const mid of b.hullMods || []) {
+    if ((sh.builtInMods || []).includes(mid) || smods.has(mid)) continue;
     const hm = (S.data.hullmods || {})[mid];
     if (!hm) continue;
     const costs = hm.costs || hm.opCost || {};
     hullmods += costs[sh.hullSize] ?? costs.default ?? 0;
   }
   let fighters = 0;
-  (S.build.wings || []).forEach((wid, i) => {
+  (b.wings || []).forEach((wid, i) => {
     if (wid && !wingBayLocked(sh, i)) fighters += ((S.data.wings || {})[wid] || {}).op || 0;
   });
+  const vents = b.vents || 0, caps = b.caps || 0;
   return {
-    weapons, hullmods, fighters,
-    vents: S.build.vents, caps: S.build.caps,
-    total: weapons + hullmods + fighters + S.build.vents + S.build.caps,
+    weapons, hullmods, fighters, vents, caps,
+    total: weapons + hullmods + fighters + vents + caps,
     budget: sh.op || 0,
   };
 }
+function opBreakdown() { return opBreakdownFor(ship(), S.build); }
 function fluxStats() {
   const sh = ship();
   const agg = computeModAgg();
@@ -996,7 +1003,7 @@ function renderPanel() {
         <button data-step="caps|-1">−</button><span class="val">${S.build.caps}</span><button data-step="caps|1">+</button>
       </span>
     </div>
-    <div class="note">1 OP each, max 30. +10 dissipation per vent, +100 capacity per capacitor.</div>
+    <div class="note">1 OP each. +10 dissipation per vent, +100 capacity per capacitor. (Real saves run past 50 vents on capitals; the editor allows up to 99.)</div>
   `;
 
   // ---- selected slot
@@ -1019,11 +1026,17 @@ function renderPanel() {
       html += `<div class="note">${esc(sel.type)} slots cannot be fitted.</div>`;
     } else {
       const legal = legalWeapons(sel)
+        .filter((x) => S.weaponSizeFilter === "ALL" || x.size === S.weaponSizeFilter)
         .filter((x) => !S.weaponSearch
           || x.name.toLowerCase().includes(S.weaponSearch.toLowerCase())
           || x.id.includes(S.weaponSearch.toLowerCase()));
       const sortOpt = (v, label) =>
         `<option value="${v}" ${S.weaponSort === v ? "selected" : ""}>${label}</option>`;
+      // size chips reflect the slot's capacity: sizes too big for the slot
+      // are hidden entirely (a SMALL slot offers only All + Small)
+      const maxRank = SIZE_RANK[sel.size] || 3;
+      const chipSizes = ["ALL", ...["SMALL", "MEDIUM", "LARGE"].filter((s) => SIZE_RANK[s] <= maxRank)];
+      if (!chipSizes.includes(S.weaponSizeFilter)) S.weaponSizeFilter = "ALL";
       html += `
         <button data-action="empty-slot" ${w ? "" : "disabled"}>Empty slot</button>
         <div class="weapon-controls">
@@ -1033,6 +1046,9 @@ function renderPanel() {
             ${sortOpt("op", "Sort: OP")}${sortOpt("dps", "Sort: DPS")}
             ${sortOpt("range", "Sort: Range")}${sortOpt("name", "Sort: Name")}
           </select>
+        </div>
+        <div class="weapon-size-chips">
+          ${chipSizes.map((s) => `<button class="chip ${S.weaponSizeFilter === s ? "active" : ""}" data-wsize="${s}">${s === "ALL" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}</button>`).join("")}
         </div>
         <div class="weapon-list">
           ${legal.map((x) => weaponCard(x, sel, agg, w && w.id === x.id)).join("")
@@ -1061,14 +1077,17 @@ function renderPanel() {
     html += `<div class="hullmod-list">` + visible.map((hm) => {
       const cost = (hm.costs || {})[sh.hullSize] ?? 0;
       const builtIn = builtIns.includes(hm.id);
-      const block = builtIn ? null : hullmodBlockReason(hm, sh);
+      // s-mods (from a save/variant's permaMods) are locked like built-ins
+      // and cost no OP; they render with an S badge
+      const isSmod = !builtIn && (S.build.smods || []).includes(hm.id);
+      const block = builtIn || isSmod ? null : hullmodBlockReason(hm, sh);
       const tip = hm.desc && !hm.desc.startsWith("<Tooltip") ? hm.desc : (hm.short || "");
       const effSum = effectsSummary(hm, sh.hullSize);
-      return `<label class="hullmod-row ${block ? "blocked" : ""}"><input type="checkbox" data-hullmod="${esc(hm.id)}"
-        ${S.build.hullMods.includes(hm.id) ? "checked" : ""} ${builtIn || block ? "disabled" : ""}>
+      return `<label class="hullmod-row ${block ? "blocked" : ""} ${isSmod ? "smod" : ""}"><input type="checkbox" data-hullmod="${esc(hm.id)}"
+        ${S.build.hullMods.includes(hm.id) ? "checked" : ""} ${builtIn || isSmod || block ? "disabled" : ""}>
         ${hm.icon ? `<img class="hm-icon" data-hmicon="${esc(hm.id)}" alt="">` : `<span class="hm-icon"></span>`}
-        <span class="hm-name"${tip ? ` title="${esc(tip)}"` : ""}>${esc(hm.name)}${effSum ? `<span class="hm-effects">${esc(effSum)}</span>` : ""}${block ? `<span class="hm-block">${esc(block)}</span>` : ""}</span>
-        <span class="note">${builtIn ? "built-in" : `${cost} OP`}</span></label>`;
+        <span class="hm-name"${tip ? ` title="${esc(tip)}"` : ""}>${isSmod ? '<span class="smod-badge">S</span>' : ""}${esc(hm.name)}${effSum ? `<span class="hm-effects">${esc(effSum)}</span>` : ""}${block ? `<span class="hm-block">${esc(block)}</span>` : ""}</span>
+        <span class="note">${builtIn ? "built-in" : isSmod ? "s-mod · 0 OP" : `${cost} OP`}</span></label>`;
     }).join("")
       + builtIns.filter((mid) => !allMods[mid]).map((mid) =>
         `<div class="hullmod-row"><span class="hm-icon"></span><span class="hm-name">${esc(mid)}</span>
@@ -1149,12 +1168,15 @@ function wirePanel(saved) {
   for (const b of panel.querySelectorAll("[data-step]")) {
     b.addEventListener("click", () => {
       const [field, d] = b.dataset.step.split("|");
-      S.build[field] = Math.max(0, Math.min(30, S.build[field] + Number(d)));
+      S.build[field] = Math.max(0, Math.min(99, S.build[field] + Number(d)));
       afterBuildChange();
     });
   }
   for (const b of panel.querySelectorAll("[data-fit]")) {
     b.addEventListener("click", () => fitWeapon(S.selectedSlot, b.dataset.fit));
+  }
+  for (const b of panel.querySelectorAll("[data-wsize]")) {
+    b.addEventListener("click", () => { S.weaponSizeFilter = b.dataset.wsize; renderPanel(); draw(); });
   }
   for (const b of panel.querySelectorAll("[data-hullmod]")) {
     b.addEventListener("change", () => {
@@ -1247,7 +1269,7 @@ function toVariant() {
     const wid = S.build.weapons[slot.id];
     if (wid && !isLocked(slot.id)) weapons[slot.id] = wid;
   }
-  return {
+  const variant = {
     hullId: S.shipId,
     displayName: S.build.name || ship().name,
     fluxVents: S.build.vents,
@@ -1258,6 +1280,12 @@ function toVariant() {
     // on a round trip, and the game forces built-in wings from the hull anyway
     wings: (S.build.wings || []).filter(Boolean),
   };
+  // s-mods survive the round trip (loaded from a save or variant)
+  if ((S.build.smods || []).length) {
+    variant.permaMods = [...S.build.smods];
+    variant.smods = [...S.build.smods];
+  }
+  return variant;
 }
 function download(name, text) {
   const a = document.createElement("a");
@@ -1287,9 +1315,10 @@ function applyVariant(v) {
     hullId,
     name: v.displayName || v.name || "",
     weapons: { ...target.builtInWeapons },
-    vents: Math.max(0, Math.min(30, v.fluxVents ?? v.vents ?? 0)),
-    caps: Math.max(0, Math.min(30, v.fluxCapacitors ?? v.caps ?? 0)),
+    vents: Math.max(0, Math.min(99, v.fluxVents ?? v.vents ?? 0)),
+    caps: Math.max(0, Math.min(99, v.fluxCapacitors ?? v.caps ?? 0)),
     hullMods: [...(target.builtInMods || [])],
+    smods: [],
     // wings map positionally onto bays; unknown ids dropped, and selectShip
     // re-forces built-in wings into their locked bays afterwards
     wings: (() => {
@@ -1308,7 +1337,527 @@ function applyVariant(v) {
   for (const m of v.hullMods || v.hullmods || []) {
     if (!build.hullMods.includes(m)) build.hullMods.push(m);
   }
+  // permaMods/smods: permanent mods at 0 OP, locked like built-ins
+  // (built-ins themselves are handled via the hull, not as s-mods)
+  const perma = [...(v.permaMods || []), ...(v.smods || [])];
+  build.smods = [...new Set(perma.filter((m) => !(target.builtInMods || []).includes(m)))];
+  for (const m of build.smods) if (!build.hullMods.includes(m)) build.hullMods.push(m);
   selectShip(hullId, build);
+}
+
+// ---------------------------------------------------------------- save import
+// Starsector campaign.xml is an XStream object serialization, not semantic
+// XML: elements are field names, sets are <string> lists, maps are
+// <entry><string>key</string><string>value</string></entry> pairs, and
+// repeated objects are often replaced by reference="relative/xpath" stubs
+// (XStream relative paths: ".." = parent, name[n] = 1-based n-th child).
+// Tags below are matched by LOCAL name (after the last ".") so both
+// field-name tags (playerFleet) and fully-qualified class tags
+// (com.fs.starfarer.api.campaign.CampaignFleet) resolve the same way.
+const localName = (el) => el.tagName.split(".").pop();
+function childNamed(el, name) {
+  if (!el || !el.children) return null;
+  for (const c of el.children) if (localName(c) === name) return c;
+  return null;
+}
+function childrenNamed(el, name) {
+  if (!el || !el.children) return [];
+  return [...el.children].filter((c) => localName(c) === name);
+}
+function textOf(el) { return el ? el.textContent.trim() : ""; }
+function numOf(el) { const n = parseFloat(textOf(el)); return Number.isFinite(n) ? n : 0; }
+// Walk an XStream relative path from an element: "..", "name", "name[n]".
+function resolveXPath(el, path) {
+  if (!el || !path) return null;
+  let cur = el;
+  for (const seg of path.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") { cur = cur.parentElement; if (!cur) return null; continue; }
+    const m = seg.match(/^(.*)\[(\d+)\]$/);
+    const name = m ? m[1] : seg;
+    const idx = m ? parseInt(m[2], 10) : 1;
+    const kids = childrenNamed(cur, name);
+    if (!kids.length || idx < 1 || idx > kids.length) return null;
+    cur = kids[idx - 1];
+  }
+  return cur;
+}
+// Resolve a node that may be a reference stub into the real element.
+// Bare-id fallbacks (a <variant id="…"> lookup by its variantId text) are
+// handled by the caller via the variant registry.
+function deref(el) {
+  if (!el) return null;
+  const ref = el.getAttribute && el.getAttribute("reference");
+  if (ref) {
+    const r = resolveXPath(el, ref);
+    if (r) return deref(r);
+  }
+  return el;
+}
+function stringList(el) {
+  if (!el) return [];
+  // direct <string> children, or a nested container's children
+  const direct = childrenNamed(el, "string").map(textOf);
+  if (direct.length) return direct;
+  for (const c of el.children) {
+    const inner = childrenNamed(c, "string").map(textOf);
+    if (inner.length) return inner;
+  }
+  return [];
+}
+// A string->string map from <entry><string>k</string><string>v</string></entry>
+function stringMap(el) {
+  const out = {};
+  if (!el) return out;
+  for (const e of el.children) {
+    if (localName(e) !== "entry") continue;
+    const ss = childrenNamed(e, "string");
+    if (ss.length >= 2) out[textOf(ss[0])] = textOf(ss[1]);
+  }
+  return out;
+}
+function nodeText(el, name) {
+  const c = childNamed(el, name);
+  if (!c) return "";
+  // a <name> element may hold a plain string or a structured name object
+  if (localName(c) === "name" && c.children.length) {
+    const first = textOf(childNamed(c, "first")), last = textOf(childNamed(c, "last"));
+    if (first || last) return `${first} ${last}`.trim();
+  }
+  return textOf(c);
+}
+function personName(person) {
+  if (!person) return "";
+  const n = childNamed(person, "name");
+  if (!n) return textOf(person);
+  if (n.children.length) {
+    const first = textOf(childNamed(n, "first")), last = textOf(childNamed(n, "last"));
+    if (first || last) return `${first} ${last}`.trim();
+  }
+  return textOf(n);
+}
+// Collect every element matching a local name, depth-first (cheap for
+// campaign.xml since one pass covers playerFleet, fleets, factions, variants).
+function scanAll(doc, name) {
+  const out = [];
+  const walk = (el) => {
+    for (const c of el.children) {
+      if (localName(c) === name) out.push(c);
+      walk(c);
+    }
+  };
+  walk(doc.documentElement);
+  return out;
+}
+// A fleet member: shipName + a variant (inline, reference stub, or bare id
+// that matches a variant's variantId text), excluding fighter wings.
+function memberShipName(member) {
+  return nodeText(member, "shipName") || nodeText(member, "name") || "";
+}
+function memberType(member) {
+  return (nodeText(member, "type") || nodeText(member, "shipType") || "").toUpperCase();
+}
+function parseVariant(variantEl, registry) {
+  const v = deref(variantEl);
+  if (!v) return null;
+  // bare-id stub: an element whose text is a variant id from the registry
+  if (!v.children.length && textOf(v) && registry[textOf(v)]) return registry[textOf(v)];
+  const variantId = textOf(childNamed(v, "variantId")) || textOf(childNamed(v, "id"));
+  const hullId = textOf(childNamed(v, "hullId")) || textOf(childNamed(v, "shipId")) || "";
+  const weapons = {};
+  const groups = [];
+  const groupsEl = childNamed(v, "weaponGroups") || childNamed(v, "groups");
+  if (groupsEl) {
+    for (const g of groupsEl.children) {
+      const mode = (textOf(childNamed(g, "mode")) || "LINKED").toUpperCase();
+      const mapEl = childNamed(g, "weapons") || g;
+      const map = stringMap(mapEl);
+      groups.push({ mode, autofire: textOf(childNamed(g, "autofire")) === "true", weapons: map });
+      Object.assign(weapons, map);
+    }
+  } else {
+    // flat weapons map on the variant itself
+    Object.assign(weapons, stringMap(childNamed(v, "weapons")));
+  }
+  // wings: a <wings>/<fittedWings> string list, else a wing map's values
+  let wings = [];
+  const wingsEl = childNamed(v, "wings") || childNamed(v, "fittedWings");
+  if (wingsEl) {
+    wings = stringList(wingsEl);
+    if (!wings.length) wings = Object.values(stringMap(wingsEl));
+  }
+  return {
+    variantId, hullId,
+    displayName: textOf(childNamed(v, "displayName")) || textOf(childNamed(v, "name")) || "",
+    fluxVents: numOf(childNamed(v, "fluxVents")),
+    fluxCapacitors: numOf(childNamed(v, "fluxCapacitors")),
+    hullMods: stringList(childNamed(v, "hullMods")),
+    permaMods: stringList(childNamed(v, "permaMods")),
+    smods: stringList(childNamed(v, "smods")),
+    weaponGroups: groups, weapons, wings,
+  };
+}
+// A fleet element looks like: name, commander, faction, members container.
+// Player fleet identification, in priority order:
+//  1. a <playerFleet> element (direct or reference stub) anywhere in the doc
+//  2. the fleet whose commander is the player Person (<playerPerson>,
+//     <player> or <characterData>), or whose commander name matches
+//  3. a fleet of the player faction (a Faction whose <id> is "player")
+function findPlayerFleet(doc) {
+  const playerFleetEls = scanAll(doc, "playerFleet");
+  for (const el of playerFleetEls) {
+    const f = deref(el);
+    if (!f) continue;
+    if (localName(f) !== "playerFleet") return { fleet: f, method: "playerFleet reference" };
+    // inline form: the fleet serialized inside <playerFleet> itself
+    if (fleetMembersRaw(el).length) return { fleet: el, method: "playerFleet element" };
+  }
+  const fleets = scanAll(doc, "CampaignFleet");
+  if (!fleets.length) return null;
+  const personEls = [...scanAll(doc, "playerPerson"), ...scanAll(doc, "characterData"), ...scanAll(doc, "player")];
+  let playerPerson = null;
+  for (const el of personEls) { const p = deref(el); if (p) { playerPerson = p; break; } }
+  const playerName = playerPerson ? personName(playerPerson) : "";
+  if (playerPerson || playerName) {
+    for (const f of fleets) {
+      const cmd = deref(childNamed(f, "commander"));
+      if (playerPerson && cmd === playerPerson) return { fleet: f, method: "fleet commander is the player character" };
+      if (playerName && cmd && personName(cmd) === playerName) return { fleet: f, method: "fleet commander name matches the player character" };
+    }
+  }
+  // player faction: Faction with <id>player</id>, resolved via faction refs
+  const factions = scanAll(doc, "Faction");
+  const playerFaction = factions.find((fa) => textOf(childNamed(fa, "id")) === "player");
+  if (playerFaction) {
+    const playerFleets = fleets.filter((f) => {
+      const fr = deref(childNamed(f, "faction"));
+      return fr === playerFaction;
+    });
+    if (playerFleets.length) {
+      // prefer a fleet whose name matches the player name, else the biggest
+      if (playerName) {
+        const named = playerFleets.find((f) => textOf(childNamed(f, "name")).includes(playerName));
+        if (named) return { fleet: named, method: "player-faction fleet, name matches the player character" };
+      }
+      playerFleets.sort((a, b) => fleetMembersRaw(b).length - fleetMembersRaw(a).length);
+      return { fleet: playerFleets[0], method: "player-faction fleet (largest)" };
+    }
+  }
+  return null;
+}
+// Members container: the shallowest descendant named "members" whose
+// children look like fleet members (have a variant or shipName).
+function fleetMembersRaw(fleet) {
+  const cands = [];
+  const walk = (el, depth) => {
+    for (const c of el.children) {
+      if (localName(c) === "members") cands.push({ el: c, depth });
+      walk(c, depth + 1);
+    }
+  };
+  walk(fleet, 0);
+  cands.sort((a, b) => a.depth - b.depth);
+  for (const { el } of cands) {
+    const kids = [...el.children].filter((k) => childNamed(k, "variant") || childNamed(k, "shipName"));
+    if (kids.length) return kids;
+  }
+  return [];
+}
+function memberCr(member) {
+  const rt = childNamed(member, "repairTracker") || childNamed(member, "status");
+  const cr = (rt && childNamed(rt, "cr")) || childNamed(member, "cr");
+  if (!cr) return null;
+  const n = parseFloat(textOf(cr));
+  return Number.isFinite(n) ? n : null;
+}
+// ---- the game's compact save dialect (what 0.98a actually writes):
+// abbreviated class tags (Flt = fleet, FMmbr = member), data in attributes
+// (sN = ship name, hId = hull id, v/c = flux vents/capacitors, cr on the
+// repair tracker), repeated objects as ref="N" stubs resolved through the
+// z="N" id index. See SAVE_FORMAT.md for the full mapping.
+function parseSaveCompact(doc) {
+  const zIndex = new Map();
+  for (const el of doc.querySelectorAll("[z]")) zIndex.set(el.getAttribute("z"), el);
+  const derefC = (el) => {
+    let cur = el;
+    for (let i = 0; i < 10 && cur && cur.getAttribute && cur.getAttribute("ref"); i++) {
+      const nxt = zIndex.get(cur.getAttribute("ref"));
+      if (!nxt) break;
+      cur = nxt;
+    }
+    return cur;
+  };
+  // player fleet: the <playerFleet ref="…"> stub, resolved via the z index
+  let fleet = null, method = "";
+  for (const el of doc.getElementsByTagName("playerFleet")) {
+    const f = derefC(el);
+    if (f && f !== el) { fleet = f; method = "playerFleet reference (z-index)"; break; }
+  }
+  if (!fleet) {
+    for (const f of doc.getElementsByTagName("Flt")) {
+      if (f.getAttribute("n") === "Player Fleet") { fleet = f; method = "fleet named 'Player Fleet'"; break; }
+    }
+  }
+  if (!fleet) throw new Error("No player fleet found: no <playerFleet> reference in this save.");
+  // character name: characterData > name (matches descriptor.xml)
+  let characterName = "";
+  const cd = doc.getElementsByTagName("characterData")[0];
+  if (cd) characterName = textOf(childNamed(cd, "name"));
+  if (!characterName) characterName = fleet.getAttribute("n") || "";
+  // members: fleet > fD (fleet data) > m (member list) > FMmbr elements
+  const fD = derefC(childNamed(fleet, "fD"));
+  let memberEls = [];
+  if (fD) {
+    const m = childNamed(fD, "m");
+    if (m) memberEls = [...m.children].filter((k) => localName(k) === "FMmbr").map(derefC);
+    if (!memberEls.length) memberEls = [...fD.querySelectorAll("FMmbr")].map(derefC);
+  }
+  if (!memberEls.length) throw new Error("Player fleet found but its member list (fD/m) could not be read.");
+  const members = [];
+  for (const mm of memberEls) {
+    const parsed = parseMemberCompact(mm, derefC);
+    if (parsed) members.push(parsed);
+  }
+  if (!members.length) throw new Error("Player fleet members could not be parsed.");
+  return { characterName, fleetName: fleet.getAttribute("n") || "", method, members };
+}
+function parseMemberCompact(mm, derefC) {
+  if ((mm.getAttribute("t") || "SHIP").toUpperCase().includes("FIGHTER")) return null;
+  const sv = derefC(childNamed(mm, "savedVariant"));
+  if (!sv) return null;
+  let hullId = sv.getAttribute("hId") || "";
+  // D-modded ships serialize against a "<base>_default_D" hull spec
+  if (hullId.endsWith("_default_D")) hullId = hullId.slice(0, -"_default_D".length);
+  if (!hullId) return null;
+  // flat slot->weapon map: <wpn><e><st>slot</st><st>weapon</st></e>…
+  const weapons = {};
+  const wpn = derefC(childNamed(sv, "wpn"));
+  if (wpn) {
+    for (const e of wpn.children) {
+      const pair = [...e.children].map((x) => x.textContent.trim());
+      if (pair.length >= 2 && pair[0]) weapons[pair[0]] = pair[1];
+    }
+  }
+  // weapon groups are SLOT lists (<s><st>slot</st>…); weapons come from wpn
+  const groups = [];
+  const wG = derefC(childNamed(sv, "wG"));
+  if (wG) {
+    for (const g of wG.children) {
+      const sEl = childNamed(g, "s");
+      const slots = sEl ? [...sEl.children].map((x) => x.textContent.trim()).filter(Boolean) : [];
+      const gw = {};
+      for (const sid of slots) if (weapons[sid]) gw[sid] = weapons[sid];
+      groups.push({ mode: (g.getAttribute("t") || "LINKED").toUpperCase(),
+                    autofire: g.getAttribute("a") === "true", weapons: gw });
+    }
+  }
+  const stList = (tag) => {
+    const el = derefC(childNamed(sv, tag));
+    return el ? [...el.children].map((x) => x.textContent.trim()) : [];
+  };
+  // hM carries ALL installed mods (built-ins, D-mods, s-mods). D-mods ride
+  // in <pM> (permaMods) too, but only <sMods> are true s-mods: pass just
+  // those as smods so D-mods keep costing OP, per the game's model.
+  const sModsEl = childNamed(sv, "sMods");
+  const rt = childNamed(mm, "rT");
+  const crRaw = rt ? parseFloat(rt.getAttribute("cr")) : NaN;
+  return {
+    name: mm.getAttribute("sN") || "",
+    hullId,
+    cr: Number.isFinite(crRaw) ? crRaw : null,
+    variant: {
+      variantId: sv.getAttribute("hVId") || "",
+      hullId,
+      displayName: sv.getAttribute("vDN") || "",
+      fluxVents: parseInt(sv.getAttribute("v") || "0", 10) || 0,
+      fluxCapacitors: parseInt(sv.getAttribute("c") || "0", 10) || 0,
+      hullMods: stList("hM").filter(Boolean),
+      permaMods: [],
+      smods: (sModsEl ? stList("sMods") : stList("pM")).filter(Boolean),
+      weaponGroups: groups, weapons,
+      wings: stList("wng").map((w) => w || null),   // empty <st> = empty bay
+    },
+  };
+}
+function parseSave(doc) {
+  // dialect dispatch: the compact format has FMmbr/Flt tags; the plainer
+  // XStream-style layout (hand-written fixtures, some tooling) does not
+  if (doc.getElementsByTagName("FMmbr").length || doc.getElementsByTagName("Flt").length) {
+    return parseSaveCompact(doc);
+  }
+  // variant registry for bare-id variant references
+  const registry = {};
+  for (const v of scanAll(doc, "ShipVariant")) {
+    const id = textOf(childNamed(v, "variantId")) || textOf(childNamed(v, "id"));
+    if (id) registry[id] = parseVariant(v, registry);
+  }
+  const found = findPlayerFleet(doc);
+  if (!found) throw new Error("No player fleet found: could not identify your fleet in this save.");
+  const fleetEl = found.fleet;
+  const rawMembers = fleetMembersRaw(fleetEl);
+  if (!rawMembers.length) throw new Error("Player fleet found but no ship members could be read.");
+  const members = [];
+  for (const m of rawMembers) {
+    if (memberType(m).includes("FIGHTER_WING")) continue;   // fighters aren't ships
+    const variantEl = childNamed(m, "variant");
+    const variant = variantEl ? parseVariant(variantEl, registry) : null;
+    const hullId = variant ? variant.hullId : (textOf(childNamed(m, "hullId")) || "");
+    if (!hullId) continue;
+    members.push({
+      name: memberShipName(m),
+      hullId,
+      variant,
+      cr: memberCr(m),
+    });
+  }
+  if (!members.length) throw new Error("Player fleet members could not be matched to known hulls.");
+  const playerEls = [...scanAll(doc, "playerPerson"), ...scanAll(doc, "characterData")];
+  let characterName = "";
+  for (const el of playerEls) {
+    const p = deref(el);
+    if (p) { const n = personName(p); if (n) { characterName = n; break; } }
+  }
+  if (!characterName) characterName = textOf(childNamed(fleetEl, "name")) || "";
+  return { characterName, fleetName: textOf(childNamed(fleetEl, "name")) || "", method: found.method, members };
+}
+function fleetMemberBuild(member) {
+  // turn a parsed member into a variant-shaped object applyVariant accepts
+  const v = member.variant || {};
+  return {
+    hullId: member.hullId,
+    displayName: member.name || v.displayName || "",
+    fluxVents: v.fluxVents || 0,
+    fluxCapacitors: v.fluxCapacitors || 0,
+    hullMods: v.hullMods || [],
+    permaMods: v.permaMods || [],
+    smods: v.smods || [],
+    weaponGroups: v.weaponGroups || [],
+    weapons: v.weapons || {},
+    wings: v.wings || [],
+  };
+}
+function renderFleet() {
+  const view = $("fleet-view");
+  if (!S.fleet) { view.hidden = true; view.innerHTML = ""; return; }
+  const f = S.fleet;
+  const rows = f.members.map((m, i) => {
+    const sh = S.data.ships[m.hullId];
+    if (!sh) {
+      return `<button class="fleet-member" disabled title="Hull ${esc(m.hullId)} is not in this viewer's data (modded hull?)">
+        <span class="fm-main"><span class="fm-name">${esc(m.name || m.hullId)}</span>
+        <span class="fm-sub">${esc(m.hullId)} · not in viewer data</span></span>
+        <span class="fm-side"><span class="fm-op">—</span><span class="fm-sub">${m.cr !== null && m.cr !== undefined ? `CR ${Math.round(m.cr * 100)}%` : ""}</span></span></button>`;
+    }
+    const build = fleetMemberBuild(m);
+    // fleetMemberBuild speaks variant field names; opBreakdownFor wants a
+    // build-shaped object (vents/caps, flat weapons incl. built-ins)
+    const op = opBreakdownFor(sh, {
+      weapons: { ...sh.builtInWeapons, ...build.weapons },
+      hullMods: [...(sh.builtInMods || []), ...build.hullMods, ...build.smods],
+      smods: build.smods,
+      vents: build.fluxVents || 0,
+      caps: build.fluxCapacitors || 0,
+      wings: build.wings,
+    });
+    const smodCount = (build.smods || []).length;
+    return `<button class="fleet-member" data-member="${i}" title="Open in the refit editor">
+      <span class="fm-main"><span class="fm-name">${esc(m.name || sh.name)}</span>
+      <span class="fm-sub">${esc(sh.name)} · ${esc(sh.hullSize)} · DP ${sh.dp ?? "?"}</span></span>
+      <span class="fm-side"><span class="fm-op ${op.total > op.budget ? "over" : ""}">${op.total} / ${op.budget} OP</span>
+      <span class="fm-sub">${m.cr !== null && m.cr !== undefined ? `CR ${Math.round(m.cr * 100)}%` : ""}${smodCount ? ` · s-mod ×${smodCount}` : ""}</span></span></button>`;
+  }).join("");
+  const known = f.members.filter((m) => S.data.ships[m.hullId]);
+  const sum = (k) => known.reduce((a, m) => a + (S.data.ships[m.hullId][k] || 0), 0);
+  const burn = known.length ? Math.min(...known.map((m) => S.data.ships[m.hullId].maxBurn || 99)) : "—";
+  const unknownNote = f.members.length !== known.length
+    ? `<div class="note">${f.members.length - known.length} ship(s) use hulls not in this viewer's vanilla data (modded hulls) and are excluded from the totals below.</div>` : "";
+  view.innerHTML = `
+    <div class="fleet-head"><h3>Fleet — ${esc(f.characterName || "Unknown captain")}</h3>
+      <button id="fleet-close" title="Close fleet view">✕</button></div>
+    <div class="note">From <b>${esc(f.fileName)}</b> · ${esc(f.method)}. Read-only: the save is parsed in
+      your browser — never uploaded, never written back. Click a ship to load its real loadout into the
+      editor; edits stay in the browser and export as .variant files.</div>
+    <div class="fleet-summary">
+      <span class="fs-cell"><span class="fs-k">Ships</span><span class="fs-v">${f.members.length}</span></span>
+      <span class="fs-cell"><span class="fs-k">Total DP</span><span class="fs-v">${sum("dp")}</span></span>
+      <span class="fs-cell"><span class="fs-k">Fuel / ly</span><span class="fs-v">${fmt(sum("fuelPerLy"))}</span></span>
+      <span class="fs-cell"><span class="fs-k">Upkeep</span><span class="fs-v">${fmt(sum("suppliesPerMonth"))} /mo</span></span>
+      <span class="fs-cell"><span class="fs-k">Cargo</span><span class="fs-v">${fmt(sum("cargo"))}</span></span>
+      <span class="fs-cell"><span class="fs-k">Fleet burn</span><span class="fs-v">${burn}</span></span>
+    </div>
+    ${unknownNote}
+    <div class="fleet-members">${rows}</div>
+    <div class="note">Fleet burn = the slowest ship's base burn. Augmented Drive Field and other
+      burn bonuses are not modeled.</div>`;
+  view.hidden = false;
+  view.querySelector("#fleet-close").addEventListener("click", () => { S.fleet = null; renderFleet(); });
+  for (const b of view.querySelectorAll("[data-member]")) {
+    b.addEventListener("click", () => {
+      const m = f.members[parseInt(b.dataset.member, 10)];
+      if (!S.data.ships[m.hullId]) return;   // unknown hull: note instead of open
+      applyVariant(fleetMemberBuild(m));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
+}
+async function importSaveFile(file) {
+  if (!file) return;
+  if (file.size > 80 * 1024 * 1024) {
+    if (!confirm(`This save is ${(file.size / 1048576).toFixed(0)} MB — parsing may take a while. Continue?`)) return;
+  }
+  $("save-busy").hidden = false;
+  try {
+    const text = await file.text();
+    // let the busy indicator paint before the synchronous parse blocks
+    await new Promise((r) => setTimeout(r, 30));
+    const doc = new DOMParser().parseFromString(text, "text/xml");
+    const err = doc.querySelector("parsererror");
+    if (err) throw new Error("Not valid XML.");
+    const rootName = localName(doc.documentElement);
+    const looksLikeSave = ["GameState", "Campaign", "CampaignEngine", "save"].includes(rootName)
+      || doc.getElementsByTagName("playerFleet").length > 0
+      || doc.getElementsByTagName("Flt").length > 0
+      || scanAll(doc, "CampaignFleet").length > 0;
+    if (!looksLikeSave) {
+      throw new Error("That doesn't look like a Starsector campaign save. Pick the campaign.xml file from a Starsector save folder.");
+    }
+    const fleet = parseSave(doc);
+    fleet.fileName = file.name;
+    S.fleet = fleet;
+    renderFleet();
+    $("panel").scrollTop = 0;
+  } catch (e) {
+    console.error("Save import failed:", e);
+    alert(`Could not read this save file: ${e.message}`);
+  } finally {
+    $("save-busy").hidden = true;
+  }
+}
+function wireSaveImport() {
+  $("import-save-btn").addEventListener("click", () => $("save-picker").click());
+  $("save-picker").addEventListener("change", async (ev) => {
+    const f = ev.target.files[0];
+    ev.target.value = "";
+    await importSaveFile(f);
+  });
+  // drag-and-drop anywhere on the page (the browser's file picker, same parser)
+  let dragDepth = 0;
+  window.addEventListener("dragenter", (e) => {
+    if (!e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    if (++dragDepth === 1) $("drop-overlay").hidden = false;
+  });
+  window.addEventListener("dragleave", (e) => {
+    if (--dragDepth <= 0) { dragDepth = 0; $("drop-overlay").hidden = true; }
+  });
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", async (e) => {
+    dragDepth = 0;
+    $("drop-overlay").hidden = true;
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) await importSaveFile(f);
+  });
 }
 
 // ---------------------------------------------------------------- UI wiring
@@ -1354,6 +1903,7 @@ function wireUI() {
     const slot = slotAt(mx, my);
     S.selectedSlot = slot ? slot.id : null;
     S.weaponSearch = "";
+    S.weaponSizeFilter = "ALL";   // size chips reset whenever the slot changes
     renderPanel();
     draw();
   });
@@ -1404,6 +1954,8 @@ function wireUI() {
     try { applyVariant(JSON.parse(await f.text())); }
     catch (e) { alert("Could not parse that file as a variant JSON."); }
   });
+
+  wireSaveImport();
 
   new ResizeObserver(() => resizeCanvas()).observe($("stage"));
   window.addEventListener("resize", resizeCanvas);

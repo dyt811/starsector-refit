@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SYNTHETIC fixture for the save-import parser test — NOT a real save.
+  Structure modeled on Starsector's XStream object serialization as known
+  from public community knowledge: field-named elements, <string> set
+  entries, <entry> map pairs, and reference="relative/xpath" stubs for
+  repeated objects. See SAVE_FORMAT.md. Expected parse results:
+    player fleet = CampaignFleet[2] (Ada Lovelace), 3 members
+    DP 70 · fuel/ly 33 · upkeep 100/mo · cargo 750 · burn 7
+    member 1 (Onslaught "ISS Resolute"): 6 fitted non-built-in weapons,
+    heavyarmor as a normal mod, fluxdistributor as an s-mod, CR 0.72
+-->
+<GameState>
+  <campaign>
+    <playerFleet reference="../sector/hyperspace/fleets/CampaignFleet[2]"/>
+    <playerPerson reference="../sector/hyperspace/fleets/CampaignFleet[2]/commander"/>
+    <sector>
+      <hyperspace>
+        <fleets>
+          <CampaignFleet>
+            <name>Hegemony Patrol</name>
+            <faction reference="../../../factions/Faction[2]"/>
+            <commander>
+              <name>
+                <first>John</first>
+                <last>Steel</last>
+              </name>
+            </commander>
+            <members>
+              <FleetMember>
+                <shipName>HSS Anvil</shipName>
+                <type>SHIP</type>
+                <variant>
+                  <hullId>hammerhead</hullId>
+                  <displayName>Standard</displayName>
+                  <fluxVents>8</fluxVents>
+                  <fluxCapacitors>2</fluxCapacitors>
+                  <hullMods>
+                    <string>hardenedsubsystems</string>
+                  </hullMods>
+                  <weaponGroups>
+                    <WeaponGroupSpec>
+                      <mode>LINKED</mode>
+                      <autofire>false</autofire>
+                      <weapons>
+                        <entry>
+                          <string>WS 001</string>
+                          <string>heavyac</string>
+                        </entry>
+                      </weapons>
+                    </WeaponGroupSpec>
+                  </weaponGroups>
+                </variant>
+                <repairTracker>
+                  <cr>0.85</cr>
+                </repairTracker>
+              </FleetMember>
+            </members>
+          </CampaignFleet>
+          <CampaignFleet>
+            <name>Ada Lovelace's Fleet</name>
+            <faction reference="../../../factions/Faction[1]"/>
+            <commander>
+              <name>
+                <first>Ada</first>
+                <last>Lovelace</last>
+              </name>
+            </commander>
+            <members>
+              <FleetMember>
+                <shipName>ISS Resolute</shipName>
+                <type>SHIP</type>
+                <variant>
+                  <hullId>onslaught</hullId>
+                  <displayName>Resolute</displayName>
+                  <fluxVents>20</fluxVents>
+                  <fluxCapacitors>10</fluxCapacitors>
+                  <hullMods>
+                    <string>heavyarmor</string>
+                  </hullMods>
+                  <permaMods>
+                    <string>fluxdistributor</string>
+                  </permaMods>
+                  <smods>
+                    <string>fluxdistributor</string>
+                  </smods>
+                  <weaponGroups>
+                    <WeaponGroupSpec>
+                      <mode>LINKED</mode>
+                      <autofire>false</autofire>
+                      <weapons>
+                        <entry>
+                          <string>WS 001</string>
+                          <string>heavyac</string>
+                        </entry>
+                        <entry>
+                          <string>WS 003</string>
+                          <string>heavyac</string>
+                        </entry>
+                        <entry>
+                          <string>WS 007</string>
+                          <string>hveldriver</string>
+                        </entry>
+                        <entry>
+                          <string>WS 010</string>
+                          <string>hveldriver</string>
+                        </entry>
+                        <entry>
+                          <string>WS 002</string>
+                          <string>lightac</string>
+                        </entry>
+                        <entry>
+                          <string>WS 005</string>
+                          <string>lightac</string>
+                        </entry>
+                      </weapons>
+                    </WeaponGroupSpec>
+                  </weaponGroups>
+                </variant>
+                <repairTracker>
+                  <cr>0.72</cr>
+                </repairTracker>
+              </FleetMember>
+              <FleetMember>
+                <shipName>ISS Swift</shipName>
+                <type>SHIP</type>
+                <variant>
+                  <hullId>eagle</hullId>
+                  <displayName>Swift</displayName>
+                  <fluxVents>12</fluxVents>
+                  <fluxCapacitors>4</fluxCapacitors>
+                  <hullMods>
+                    <string>unstable_injector</string>
+                  </hullMods>
+                  <weaponGroups>
+                    <WeaponGroupSpec>
+                      <mode>ALTERNATING</mode>
+                      <autofire>false</autofire>
+                      <weapons>
+                        <entry>
+                          <string>WS 007</string>
+                          <string>heavyac</string>
+                        </entry>
+                        <entry>
+                          <string>WS 008</string>
+                          <string>heavyac</string>
+                        </entry>
+                      </weapons>
+                    </WeaponGroupSpec>
+                    <WeaponGroupSpec>
+                      <mode>LINKED</mode>
+                      <autofire>true</autofire>
+                      <weapons>
+                        <entry>
+                          <string>WS 005</string>
+                          <string>gravitonbeam</string>
+                        </entry>
+                        <entry>
+                          <string>WS 006</string>
+                          <string>gravitonbeam</string>
+                        </entry>
+                        <entry>
+                          <string>WS 001</string>
+                          <string>sabotpod</string>
+                        </entry>
+                      </weapons>
+                    </WeaponGroupSpec>
+                  </weaponGroups>
+                </variant>
+                <repairTracker>
+                  <cr>0.9</cr>
+                </repairTracker>
+              </FleetMember>
+              <FleetMember>
+                <shipName>ISS Bulwark</shipName>
+                <type>SHIP</type>
+                <variant>
+                  <hullId>legion</hullId>
+                  <displayName>Bulwark</displayName>
+                  <fluxVents>8</fluxVents>
+                  <fluxCapacitors>0</fluxCapacitors>
+                  <weaponGroups>
+                    <WeaponGroupSpec>
+                      <mode>LINKED</mode>
+                      <autofire>false</autofire>
+                      <weapons>
+                        <entry>
+                          <string>WS 000</string>
+                          <string>mark9</string>
+                        </entry>
+                        <entry>
+                          <string>WS 001</string>
+                          <string>mark9</string>
+                        </entry>
+                        <entry>
+                          <string>WS 002</string>
+                          <string>pilum</string>
+                        </entry>
+                      </weapons>
+                    </WeaponGroupSpec>
+                  </weaponGroups>
+                  <wings>
+                    <string>talon_wing</string>
+                    <string>broadsword_wing</string>
+                  </wings>
+                </variant>
+                <repairTracker>
+                  <cr>0.66</cr>
+                </repairTracker>
+              </FleetMember>
+            </members>
+          </CampaignFleet>
+        </fleets>
+      </hyperspace>
+      <factions>
+        <Faction>
+          <id>player</id>
+          <displayName>Player</displayName>
+        </Faction>
+        <Faction>
+          <id>hegemony</id>
+          <displayName>Hegemony</displayName>
+        </Faction>
+      </factions>
+    </sector>
+  </campaign>
+</GameState>

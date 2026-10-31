@@ -258,6 +258,59 @@ button:disabled { opacity: .45; cursor: default; }
 }
 .wing-locked .locked { color: var(--amber); font-family: var(--mono); font-size: 11px; }
 
+/* ---- save import / fleet view ---- */
+.topbtn {
+  background: var(--bg3); border: 1px solid var(--teal-dim); color: var(--teal);
+  border-radius: 3px; padding: 3px 10px; cursor: pointer; font-size: 12px;
+}
+.topbtn:hover { color: #fff; border-color: var(--teal); }
+#fleet-view {
+  border: 1px solid var(--line); border-left: 3px solid var(--teal);
+  background: var(--bg3); border-radius: 3px; padding: 8px 10px; margin-bottom: 12px;
+}
+#fleet-view .fleet-head { display: flex; justify-content: space-between; align-items: center; }
+#fleet-view .fleet-head h3 { margin: 0; border-bottom: none; padding-bottom: 0; }
+#fleet-close { padding: 1px 8px; }
+.fleet-summary {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0;
+}
+.fleet-summary .fs-cell {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 4px 7px;
+}
+.fleet-summary .fs-k { display: block; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+.fleet-summary .fs-v { display: block; font-family: var(--mono); font-size: 14px; color: #eaf4f9; }
+.fleet-members { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.fleet-member {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  width: 100%; text-align: left; padding: 5px 8px;
+  background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--line);
+  border-radius: 3px; cursor: pointer; color: var(--text);
+}
+.fleet-member:hover { border-left-color: var(--teal); }
+.fleet-member:disabled { opacity: .55; cursor: default; }
+.fleet-member .fm-main, .fleet-member .fm-side { display: flex; flex-direction: column; min-width: 0; }
+.fleet-member .fm-side { text-align: right; flex: none; }
+.fleet-member .fm-name { font-weight: 600; color: #eaf4f9; }
+.fleet-member .fm-sub { color: var(--text-dim); font-size: 11px; }
+.fleet-member .fm-op { font-family: var(--mono); font-size: 12px; }
+.fleet-member .fm-op.over { color: var(--red); }
+.smod-badge {
+  display: inline-block; background: var(--amber); color: #161006; border-radius: 2px;
+  font-family: var(--mono); font-size: 10px; font-weight: 700; padding: 0 4px; margin-right: 3px;
+}
+.hullmod-row.smod .hm-name { color: var(--amber); }
+.weapon-size-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
+#drop-overlay, #save-busy {
+  position: fixed; inset: 0; background: rgba(4, 8, 12, .82); z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+}
+#drop-overlay[hidden], #save-busy[hidden] { display: none; }
+#drop-overlay .drop-card, #save-busy .drop-card {
+  background: var(--bg2); border: 1px dashed var(--teal); border-radius: 4px;
+  padding: 22px 28px; text-align: center; font-size: 14px; color: #eaf4f9;
+  pointer-events: none;
+}
+
 footer#footer {
   padding: 5px 12px; background: var(--bg2); border-top: 1px solid var(--line);
   color: var(--text-dim); font-size: 11px;

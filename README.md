@@ -209,10 +209,45 @@ effects outside the modeled set (burn level, sensor profile, CR, EW, etc.)
 are ignored. Hullmods whose scripts ship only in the game jar have no parsed
 effects beyond the two hand-encoded specials above.
 
+## Save import (read-only)
+
+**Import save…** (top bar, or drag-and-drop a save file anywhere on the
+page) reads a Starsector `campaign.xml` and shows your actual fleet:
+character name, ship count, total DP, fuel/ly, upkeep, cargo capacity,
+and fleet burn (the slowest ship's base burn — Augmented Drive Field
+and other burn bonuses are not modeled), plus every ship with its real
+loadout's OP total against its hull budget. S-mods show at 0 OP; D-mods
+cost OP normally. Clicking a ship loads its real build into the refit
+editor — permaMods/s-mods locked like built-ins, with an "S" badge —
+where all the usual tools apply and the build can be exported as a
+`.variant`.
+
+**Read-only guarantee:** the save is parsed locally with `DOMParser`;
+nothing is uploaded anywhere, and the app never writes back into a
+save. The fleet list is session-only — it is *not* stored; the only
+persistence is the pre-existing current-build autosave of whichever
+ship you open. Files over ~80 MB prompt a warning before parsing
+(late-game saves can be large; the 12.7 MB reference save parses in
+~4 s). Hulls from mods that aren't in the viewer's vanilla data are
+listed but can't be opened and are excluded from the totals.
+
+The save format is a compact custom serialization, not clean XML —
+player-fleet identification, the member/variant field mapping, the
+`_default_D` D-hull rule, and validation against a real 113-ship save
+are documented in [SAVE_FORMAT.md](SAVE_FORMAT.md).
+
+Also new in this round: the weapon picker has **size filter chips**
+(All / Small / Medium / Large) above the weapon list. The chips reflect
+the selected slot — sizes too big for the slot are hidden (a SMALL slot
+offers only All + Small) — and compose with the search box and sort;
+the filter resets to All whenever a different slot is selected.
+
 ## Privacy
 
 Everything is client-side. Builds live in `localStorage`
 (`ss-refit-builds`, `ss-refit-current`) and never leave the browser.
+Imported saves are parsed in memory only and are never stored or
+transmitted.
 
 ## Known limits
 

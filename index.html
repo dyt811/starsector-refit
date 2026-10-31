@@ -11,6 +11,7 @@
   <div class="brand">STARSECTOR <span>REFIT VIEWER</span></div>
   <div class="topmeta">
     <span id="data-version"></span>
+    <button id="import-save-btn" class="topbtn" title="Analyze a Starsector campaign.xml — read-only, parsed locally, never uploaded">Import save…</button>
     <label class="tgl">Ranges
       <select id="ranges-mode">
         <option value="selected" selected>Selected</option>
@@ -51,6 +52,7 @@
   </main>
 
   <aside id="panel">
+    <section id="fleet-view" hidden></section>
     <div id="panel-content"></div>
   </aside>
 </div>
@@ -72,6 +74,15 @@
 </div>
 
 <input type="file" id="import-picker" accept=".json,.variant,application/json" hidden>
+<input type="file" id="save-picker" accept=".xml,text/xml,application/xml" hidden>
+
+<div id="drop-overlay" hidden>
+  <div class="drop-card">Drop a Starsector <b>campaign.xml</b> to analyze your fleet.<br>
+    <span class="note">Read-only: parsed in your browser — never uploaded, never written back.</span></div>
+</div>
+<div id="save-busy" hidden>
+  <div class="drop-card">Parsing save file…</div>
+</div>
 <script src="app.js"></script>
 </body>
 </html>
