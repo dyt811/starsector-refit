@@ -161,6 +161,48 @@ screenshot of the vanilla UI, not committed here):
   “Fit ship” and “Fit range” buttons; ranges can be drawn for the selected
   slot only or for all fitted weapons.
 
+### V5: game-fidelity layout and interaction
+
+The V5 overhaul rearranges the page into the game's three-column refit
+layout and adopts its click flow:
+
+- **Left column** (game order): ship name + designation + design-type badge,
+  the wide blue Ordnance Points bar, the highlighted primary stats
+  (speed / flux capacity / flux dissipation), the compact stat grid,
+  logistics, and the flux section with the Capacitors/Vents steppers inline.
+- **Center stage**: the ship canvas on the blueprint grid. When a save is
+  imported, the fleet also appears as a horizontal strip of sprite
+  thumbnails across the top of the stage (the fleet panel is kept too);
+  clicking a thumbnail opens that ship, and the active ship is highlighted
+  in both places.
+- **Right column**: “Hull features & mods” — built-ins greyed/locked at the
+  top, then installed and available mods as icon + name rows with OP costs —
+  followed by the launch-bay fighter pickers. Build actions (named builds,
+  .variant export/import) live in a bottom strip of game-style buttons.
+- **Weapon picker flow**: clicking a slot slides the picker in over the
+  stage with the slot's current weapon pinned at the top as a full spec
+  card; search, sort, and the size chips (which adapt to the slot and reset
+  per slot) sit at the picker's top; legal weapons are compact rows.
+  Hovering or keyboard-focusing a row floats its full spec card beside the
+  row, game-tooltip style, with identical data (description, effective
+  range with hullmod effects applied). Clicking a weapon fits it;
+  right-clicking a fitted slot on the canvas — or the pinned card — clears
+  it; Esc, the ✕ button, or clicking empty stage closes the picker;
+  clicking another slot retargets it.
+- **Chrome**: dark desaturated-blue panels with 1px lighter borders and
+  corner accents, a cyan accent (#57c7e3 family), small-caps letter-spaced
+  section headers, and Orbitron (Google Fonts) for numerals and headings
+  only — body text stays a clean sans, and the ui-monospace/system
+  fallbacks look intentional if the font can't load.
+
+Web adaptations, and why: the game keeps its weapon list open so you can
+shift-click through several slots; a web page has no hover-persistent
+side list, so the picker **closes on fit** (reopening is one click, and
+retargeting covers the multi-slot case). The game's dedicated remove
+affordances don't translate to a canvas, so **right-click clears** is the
+substitute. Orbitron is an approximation of the game's numeral font, not
+the original.
+
 ## Hullmod effects
 
 For every hullmod whose script ships as Java source, `build_data.py` extracts

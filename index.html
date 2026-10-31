@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Starsector Refit Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -25,7 +28,7 @@
 </header>
 
 <div id="layout">
-  <aside id="shiplist-panel">
+  <aside id="shiplist-panel" class="gpanel">
     <input id="ship-search" type="search" placeholder="Search ships..." autocomplete="off">
     <div id="size-chips">
       <button data-size="ALL" class="chip active">All</button>
@@ -39,23 +42,37 @@
     <div id="ship-list"></div>
   </aside>
 
+  <aside id="info-panel" class="gpanel">
+    <section id="fleet-view" hidden></section>
+    <div id="info-content"></div>
+  </aside>
+
   <main id="stage">
     <canvas id="canvas"></canvas>
+    <div id="fleet-strip" hidden></div>
     <div id="tooltip" hidden></div>
+    <div id="picker" aria-label="Weapon picker">
+      <div id="picker-head"></div>
+      <div id="picker-pinned"></div>
+      <div id="picker-controls"></div>
+      <div id="picker-list"></div>
+    </div>
+    <div id="spec-float" hidden></div>
     <div id="zoomctl">
       <button id="zoom-out" title="Zoom out">−</button>
       <button id="zoom-in" title="Zoom in">+</button>
       <button id="zoom-fit" title="Fit the whole ship">Fit ship</button>
       <button id="zoom-range" title="Zoom out to frame the longest weapon range">Fit range</button>
     </div>
-    <div id="stage-hint">Click a slot to fit a weapon · mouse wheel zooms · drag pans. Everything is local.</div>
+    <div id="stage-hint">Click a slot for the weapon picker · right-click clears · Esc closes · wheel zooms · drag pans</div>
   </main>
 
-  <aside id="panel">
-    <section id="fleet-view" hidden></section>
-    <div id="panel-content"></div>
+  <aside id="mods-panel" class="gpanel">
+    <div id="mods-content"></div>
   </aside>
 </div>
+
+<div id="buildbar"></div>
 
 <footer id="footer">
   Unofficial fan project — Starsector © Fractal Softworks. Not affiliated with or endorsed by

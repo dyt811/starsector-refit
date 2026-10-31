@@ -49,6 +49,8 @@ const S = {
   shipId: null,
   build: null,            // {hullId, name, weapons:{slotId:weaponId}, vents, caps, hullMods:[], wings:[wingId|null per bay]}
   selectedSlot: null,     // slot id string
+  pickerOpen: false,      // weapon picker overlay visibility (V5 game flow)
+  activeMember: null,     // index into fleet.members for a save-opened ship
   hoverSlot: null,
   sizeFilter: "ALL",
   techFilter: "ALL",
@@ -230,8 +232,11 @@ function selectShip(shipId, savedBuild) {
   if (!ship) return;
   S.shipId = shipId;
   S.selectedSlot = null;
+  S.pickerOpen = false;
+  S.activeMember = null;
   S.hoverSlot = null;
   S.weaponSearch = "";
+  S.weaponSizeFilter = "ALL";
   resetCam();
   S.shipImg = null;
   S.build = savedBuild && savedBuild.hullId === shipId
@@ -247,6 +252,7 @@ function selectShip(shipId, savedBuild) {
   buildShipList();
   renderPanel();
   draw();
+  renderFleetStrip();
   persistCurrent();
   if (ship.sprite) {
     fetchJSON(`sprites/${ship.sprite}.json`).then(async (shard) => {
@@ -898,15 +904,131 @@ function effectsSummary(hm, hullSize) {
   return parts.slice(0, 4).join(" · ");
 }
 
-function renderPanel() {
+// ---------------------------------------------------------------- picker
+// The weapon picker is an overlay that slides in over the stage when a
+// slot is clicked (the game's flow): the slot's current weapon is pinned
+// at the top as a full spec card, legal weapons are compact rows, and
+// hovering or keyboard-focusing a row floats its full spec card beside
+// it, game-tooltip style. Fitting a weapon closes the picker; Esc or a
+// click on empty stage closes it without changes.
+function weaponRow(w, slot, isFitted) {
+  const bits = [];
+  if (w.range !== null && w.range !== undefined) bits.push(`Rng ${fmt(w.range)}`);
+  if (w.damagePerSecond) bits.push(`DPS ${fmt(w.damagePerSecond)}`);
+  else if (w.damagePerShot) bits.push(`${fmt(w.damagePerShot)}/shot`);
+  return `
+    <div class="weapon-row2 ${isFitted ? "fitted" : ""}" data-fit="${esc(w.id)}" tabindex="0" role="button"
+         aria-label="Fit ${esc(w.name)}">
+      <img class="wr-img" data-wimg="${esc(w.id)}" alt="">
+      <span class="wr-main">
+        <span class="wr-name">${esc(w.name)}</span>
+        <span class="wr-sub">${esc(SIZE_LETTER[w.size] || "?")} · ${esc(w.mountType || "")}${w.pd ? " · PD" : ""}${w.beam ? " · BEAM" : ""}${bits.length ? " · " + esc(bits.join(" · ")) : ""}</span>
+      </span>
+      <span class="wr-op">${fmt(w.op)} OP</span>
+    </div>`;
+}
+
+function showSpecFloat(w, slot, anchorEl) {
+  const fl = $("spec-float");
+  if (!fl || !w || !anchorEl) return;
+  fl.innerHTML = weaponCard(w, slot, computeModAgg(), S.build.weapons[slot.id] === w.id);
+  hydrateWeaponCards(slot);
+  fl.hidden = false;
+  const r = anchorEl.getBoundingClientRect();
+  const fw = fl.offsetWidth, fh = fl.offsetHeight;
+  let left = r.left - fw - 10;
+  if (left < 8) left = Math.min(r.right + 10, window.innerWidth - fw - 8);
+  let top = r.top;
+  if (top + fh > window.innerHeight - 8) top = window.innerHeight - fh - 8;
+  fl.style.left = Math.max(8, left) + "px";
+  fl.style.top = Math.max(8, top) + "px";
+}
+function hideSpecFloat() {
+  const fl = $("spec-float");
+  if (fl) fl.hidden = true;
+}
+
+function closePicker() { S.pickerOpen = false; hideSpecFloat(); }
+function fitFromPicker(slotId, weaponId) {
+  // game behavior adapted: choosing a weapon fits it and closes the list
+  closePicker();
+  fitWeapon(slotId, weaponId);
+}
+
+function renderPicker() {
+  const pk = $("picker");
+  const head = $("picker-head"), pinned = $("picker-pinned");
+  const controls = $("picker-controls"), list = $("picker-list");
+  const sh = ship();
+  const sel = sh ? sh.slots.find((s) => s.id === S.selectedSlot) || null : null;
+  if (!S.pickerOpen || !sel) {
+    pk.classList.remove("open");
+    head.innerHTML = ""; pinned.innerHTML = ""; controls.innerHTML = ""; list.innerHTML = "";
+    hideSpecFloat();
+    return;
+  }
+  pk.classList.add("open");
+  const agg = computeModAgg();
+  const locked = isLocked(sel.id);
+  const w = fittedWeapon(sel);
+  head.innerHTML = `
+    <div>
+      <div class="pk-title">Weapon slot</div>
+      <div class="slot-head"><b>${esc(sel.id)}</b> — ${esc(sel.type)} / ${esc(sel.size || "")} / ${esc(sel.mount || "")}
+        · arc ${fmt(sel.arc)}° @ ${fmt(sel.angle)}° ${locked ? '<span class="locked">[built-in, locked]</span>' : ""}</div>
+    </div>
+    <button id="picker-close" title="Close (Esc)">✕</button>`;
+  pinned.innerHTML = (w ? weaponCard(w, sel, agg, true) : "")
+    + (locked
+      ? `<div class="note">Built-in weapon — cannot be changed.</div>`
+      : w
+        ? `<div class="build-row"><button data-action="empty-slot">Remove weapon</button>
+             <span class="note">…or right-click the slot on the ship, or this card, to clear it.</span></div>`
+        : `<div class="note">Empty slot — pick a weapon below.</div>`);
+  if (locked || !SLOT_FIT[sel.type]) {
+    controls.innerHTML = "";
+    list.innerHTML = locked ? ""
+      : `<div class="note picker-note">${esc(sel.type)} slots cannot be fitted with weapons.</div>`;
+    return;
+  }
+  const legal = legalWeapons(sel)
+    .filter((x) => S.weaponSizeFilter === "ALL" || x.size === S.weaponSizeFilter)
+    .filter((x) => !S.weaponSearch
+      || x.name.toLowerCase().includes(S.weaponSearch.toLowerCase())
+      || x.id.includes(S.weaponSearch.toLowerCase()));
+  const sortOpt = (v, label) =>
+    `<option value="${v}" ${S.weaponSort === v ? "selected" : ""}>${label}</option>`;
+  // size chips reflect the slot's capacity: sizes too big for the slot are
+  // hidden entirely (a SMALL slot offers only All + Small)
+  const maxRank = SIZE_RANK[sel.size] || 3;
+  const chipSizes = ["ALL", ...["SMALL", "MEDIUM", "LARGE"].filter((s) => SIZE_RANK[s] <= maxRank)];
+  if (!chipSizes.includes(S.weaponSizeFilter)) S.weaponSizeFilter = "ALL";
+  controls.innerHTML = `
+    <div class="weapon-controls">
+      <input class="weapon-search" id="weapon-search" type="search" placeholder="Search weapons..."
+             value="${esc(S.weaponSearch)}" autocomplete="off">
+      <select id="weapon-sort" title="Sort weapons">
+        ${sortOpt("op", "Sort: OP")}${sortOpt("dps", "Sort: DPS")}
+        ${sortOpt("range", "Sort: Range")}${sortOpt("name", "Sort: Name")}
+      </select>
+    </div>
+    <div class="weapon-size-chips">
+      ${chipSizes.map((s) => `<button class="chip ${S.weaponSizeFilter === s ? "active" : ""}" data-wsize="${s}">${s === "ALL" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}</button>`).join("")}
+    </div>`;
+  list.innerHTML = legal.map((x) => weaponRow(x, sel, !!(w && w.id === x.id))).join("")
+    || '<div class="note" style="padding:6px">No legal weapons match.</div>';
+}
+
+// ---------------------------------------------------------------- panels
+// Left column (game order): identity, OP bar, primary stats, stat grid,
+// logistics, flux with the Capacitors/Vents steppers inline.
+function renderInfo() {
   const sh = ship();
   if (!sh) return;
   const op = opBreakdown();
   const fx = fluxStats();
   const agg = computeModAgg();
   const over = op.total > op.budget;
-  // stat row with base -> effective + signed delta when hullmods (or vents /
-  // caps, for the flux pair) change the value
   const statRow = (label, base, eff, d = 0) => {
     if (base === null || base === undefined)
       return `<span class="k">${label}</span><span class="v">—</span>`;
@@ -916,8 +1038,6 @@ function renderPanel() {
     return `<span class="k">${label}</span><span class="v eff">${fmt(Math.round(eff * 10) / 10, d)} `
       + `<span class="delta ${delta > 0 ? "pos" : "neg"}">(${delta > 0 ? "+" : ""}${fmt(Math.round(delta * 10) / 10, d)})</span></span>`;
   };
-  // highlighted primary stat card: big effective value, signed delta when
-  // hullmods (or vents/caps, for the flux pair) move it off the base value
   const primaryCard = (label, base, eff, cls) => {
     if (base === null || base === undefined)
       return `<div class="pstat ${cls}"><span class="pk">${label}</span><span class="pv">—</span></div>`;
@@ -929,14 +1049,22 @@ function renderPanel() {
   };
   const lv = (v, suffix = "", d = 0) =>
     (v === null || v === undefined ? "—" : fmt(v, d) + suffix);
-  const pct = (n) => Math.min(100, (n / Math.max(op.budget, op.total, 1)) * 100);
-  const sel = sh.slots.find((s) => s.id === S.selectedSlot) || null;
   const tech = shipTech(sh);
 
-  let html = `
+  $("info-content").innerHTML = `
     <h2>${esc(sh.name)}${tech ? ` <span class="tech-badge tech-${techClass(tech)}">${esc(tech)}</span>` : ""}</h2>
     <div class="ship-sub">${esc(sh.designation || "")}${sh.designation && sh.manufacturer ? " · " : ""}${esc(sh.manufacturer || "")}
       · ${esc((sh.hullSize || "").replace(/_/g, " "))}${sh.isSkin ? ` · skin of ${esc(sh.baseHullId)}` : ""}</div>
+
+    <h3>Ordnance Points</h3>
+    <div class="opbar ${over ? "over" : ""}">
+      <div class="opfill" style="width:${Math.min(100, (op.total / Math.max(op.budget, 1)) * 100)}%"></div>
+      <span class="optext">${op.total} / ${op.budget} OP</span>
+    </div>
+    <div class="op-legend ${over ? "over-text" : ""}">weapons <b>${op.weapons}</b>
+      · hullmods <b>${op.hullmods}</b> · fighters <b>${op.fighters}</b>
+      · vents <b>${op.vents}</b> · caps <b>${op.caps}</b>${over ? " · OVER BUDGET" : ""}</div>
+
     <div class="primary-stats">
       ${primaryCard("Max speed", sh.maxSpeed, effShipStat("maxSpeed", agg), "a-spd")}
       ${primaryCard("Flux capacity", sh.fluxCapacity, fx.capacity, "a-cap")}
@@ -958,32 +1086,6 @@ function renderPanel() {
       <span class="k">Base value</span><span class="v">${fmt(sh.baseValue)} cr</span>
     </div>
 
-    <h3>Logistics</h3>
-    <div class="stats-grid">
-      <span class="k">Fuel capacity</span><span class="v">${lv(sh.fuelCapacity)}</span>
-      <span class="k">Fuel / ly</span><span class="v">${lv(sh.fuelPerLy, "", 1)}</span>
-      ${statRow("Max burn", sh.maxBurn, effShipStat("maxBurn", agg))}
-      <span class="k">Cargo</span><span class="v">${lv(sh.cargo)}</span>
-      <span class="k">Crew</span><span class="v">${sh.minCrew === null || sh.minCrew === undefined ? "—" : `${fmt(sh.minCrew)} – ${fmt(sh.maxCrew)}`}</span>
-      <span class="k">Upkeep</span><span class="v">${lv(sh.suppliesPerMonth, "/mo")}</span>
-      <span class="k">Supplies to recover</span><span class="v">${lv(sh.suppliesRec)}</span>
-      <span class="k">CR to deploy</span><span class="v">${lv(sh.crToDeploy, "%")}</span>
-      <span class="k">CR per day</span><span class="v">${lv(sh.crPerDay, "%")}</span>
-      <span class="k">Peak CR time</span><span class="v">${lv(sh.peakCrSec, " s")}</span>
-    </div>
-
-    <h3>Ordnance Points</h3>
-    <div class="opbar ${over ? "over" : ""}">
-      <div class="seg-weapons" style="width:${pct(op.weapons)}%"></div>
-      <div class="seg-hullmods" style="width:${pct(op.hullmods)}%"></div>
-      <div class="seg-fighters" style="width:${pct(op.fighters)}%"></div>
-      <div class="seg-vents" style="width:${pct(op.vents)}%"></div>
-      <div class="seg-caps" style="width:${pct(op.caps)}%"></div>
-    </div>
-    <div class="op-legend ${over ? "over-text" : ""}"><b>${op.total} / ${op.budget} OP</b>
-      · weapons ${op.weapons} · hullmods ${op.hullmods} · fighters ${op.fighters}
-      · vents ${op.vents} · caps ${op.caps}${over ? " · OVER BUDGET" : ""}</div>
-
     <h3>Flux</h3>
     <div class="stats-grid">
       <span class="k">Weapon flux/s</span><span class="v">${fmt(fx.weaponPerSec)}</span>
@@ -1004,61 +1106,29 @@ function renderPanel() {
       </span>
     </div>
     <div class="note">1 OP each. +10 dissipation per vent, +100 capacity per capacitor. (Real saves run past 50 vents on capitals; the editor allows up to 99.)</div>
+
+    <h3>Logistics</h3>
+    <div class="stats-grid">
+      <span class="k">Fuel capacity</span><span class="v">${lv(sh.fuelCapacity)}</span>
+      <span class="k">Fuel / ly</span><span class="v">${lv(sh.fuelPerLy, "", 1)}</span>
+      ${statRow("Max burn", sh.maxBurn, effShipStat("maxBurn", agg))}
+      <span class="k">Cargo</span><span class="v">${lv(sh.cargo)}</span>
+      <span class="k">Crew</span><span class="v">${sh.minCrew === null || sh.minCrew === undefined ? "—" : `${fmt(sh.minCrew)} – ${fmt(sh.maxCrew)}`}</span>
+      <span class="k">Upkeep</span><span class="v">${lv(sh.suppliesPerMonth, "/mo")}</span>
+      <span class="k">Supplies to recover</span><span class="v">${lv(sh.suppliesRec)}</span>
+      <span class="k">CR to deploy</span><span class="v">${lv(sh.crToDeploy, "%")}</span>
+      <span class="k">CR per day</span><span class="v">${lv(sh.crPerDay, "%")}</span>
+      <span class="k">Peak CR time</span><span class="v">${lv(sh.peakCrSec, " s")}</span>
+    </div>
   `;
+}
 
-  // ---- selected slot
-  html += `<h3>Weapon Slot</h3>`;
-  if (!sel) {
-    html += `<div class="note">Click a slot on the ship to select it.</div>`;
-  } else {
-    const locked = isLocked(sel.id);
-    const w = fittedWeapon(sel);
-    html += `<div class="slot-head"><b>${esc(sel.id)}</b> — ${esc(sel.type)} / ${esc(sel.size || "")} / ${esc(sel.mount || "")}
-      · arc ${fmt(sel.arc)}° @ ${fmt(sel.angle)}° ${locked ? '<span class="locked">[built-in, locked]</span>' : ""}</div>`;
-    if (w) {
-      html += weaponCard(w, sel, agg, true);
-    } else {
-      html += `<div class="note">Empty.</div>`;
-    }
-    if (locked) {
-      html += `<div class="note">Built-in weapon — cannot be changed.</div>`;
-    } else if (!SLOT_FIT[sel.type]) {
-      html += `<div class="note">${esc(sel.type)} slots cannot be fitted.</div>`;
-    } else {
-      const legal = legalWeapons(sel)
-        .filter((x) => S.weaponSizeFilter === "ALL" || x.size === S.weaponSizeFilter)
-        .filter((x) => !S.weaponSearch
-          || x.name.toLowerCase().includes(S.weaponSearch.toLowerCase())
-          || x.id.includes(S.weaponSearch.toLowerCase()));
-      const sortOpt = (v, label) =>
-        `<option value="${v}" ${S.weaponSort === v ? "selected" : ""}>${label}</option>`;
-      // size chips reflect the slot's capacity: sizes too big for the slot
-      // are hidden entirely (a SMALL slot offers only All + Small)
-      const maxRank = SIZE_RANK[sel.size] || 3;
-      const chipSizes = ["ALL", ...["SMALL", "MEDIUM", "LARGE"].filter((s) => SIZE_RANK[s] <= maxRank)];
-      if (!chipSizes.includes(S.weaponSizeFilter)) S.weaponSizeFilter = "ALL";
-      html += `
-        <button data-action="empty-slot" ${w ? "" : "disabled"}>Empty slot</button>
-        <div class="weapon-controls">
-          <input class="weapon-search" id="weapon-search" type="search" placeholder="Search weapons..."
-                 value="${esc(S.weaponSearch)}" autocomplete="off">
-          <select id="weapon-sort" title="Sort weapons">
-            ${sortOpt("op", "Sort: OP")}${sortOpt("dps", "Sort: DPS")}
-            ${sortOpt("range", "Sort: Range")}${sortOpt("name", "Sort: Name")}
-          </select>
-        </div>
-        <div class="weapon-size-chips">
-          ${chipSizes.map((s) => `<button class="chip ${S.weaponSizeFilter === s ? "active" : ""}" data-wsize="${s}">${s === "ALL" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}</button>`).join("")}
-        </div>
-        <div class="weapon-list">
-          ${legal.map((x) => weaponCard(x, sel, agg, w && w.id === x.id)).join("")
-            || '<div class="note" style="padding:6px">No legal weapons match.</div>'}
-        </div>`;
-    }
-  }
-
-  // ---- hullmods
-  html += `<h3>Hullmods</h3>`;
+// Right column: "Hull features & mods" (built-ins first, greyed/locked),
+// then installed/available mods, then the launch-bay fighter pickers.
+function renderMods() {
+  const sh = ship();
+  if (!sh) return;
+  let html = `<h3>Hull features &amp; mods</h3>`;
   const allMods = S.data.hullmods || {};
   if (!Object.keys(allMods).length) {
     html += `<div class="note">Hullmod data pending — arrives with the next data pull.</div>`;
@@ -1073,7 +1143,9 @@ function renderPanel() {
     const visible = Object.values(allMods)
       .filter((hm) => builtIns.includes(hm.id) || S.build.hullMods.includes(hm.id)
         || (!hm.hidden && !hm.hiddenEverywhere))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) =>
+        (builtIns.includes(b.id) ? 1 : 0) - (builtIns.includes(a.id) ? 1 : 0)
+        || a.name.localeCompare(b.name));
     html += `<div class="hullmod-list">` + visible.map((hm) => {
       const cost = (hm.costs || {})[sh.hullSize] ?? 0;
       const builtIn = builtIns.includes(hm.id);
@@ -1087,11 +1159,11 @@ function renderPanel() {
         ${S.build.hullMods.includes(hm.id) ? "checked" : ""} ${builtIn || isSmod || block ? "disabled" : ""}>
         ${hm.icon ? `<img class="hm-icon" data-hmicon="${esc(hm.id)}" alt="">` : `<span class="hm-icon"></span>`}
         <span class="hm-name"${tip ? ` title="${esc(tip)}"` : ""}>${isSmod ? '<span class="smod-badge">S</span>' : ""}${esc(hm.name)}${effSum ? `<span class="hm-effects">${esc(effSum)}</span>` : ""}${block ? `<span class="hm-block">${esc(block)}</span>` : ""}</span>
-        <span class="note">${builtIn ? "built-in" : isSmod ? "s-mod · 0 OP" : `${cost} OP`}</span></label>`;
+        <span class="${builtIn || isSmod ? "hm-cost free" : "hm-cost"}">${builtIn ? "built-in" : isSmod ? "s-mod · 0 OP" : `${cost} OP`}</span></label>`;
     }).join("")
       + builtIns.filter((mid) => !allMods[mid]).map((mid) =>
         `<div class="hullmod-row"><span class="hm-icon"></span><span class="hm-name">${esc(mid)}</span>
-          <span class="note">built-in</span></div>`).join("")
+          <span class="hm-cost free">built-in</span></div>`).join("")
       + `</div>`;
   }
 
@@ -1122,34 +1194,39 @@ function renderPanel() {
       html += `<div class="note">Fitted wings cost OP; built-in wings are free and locked.</div>`;
     }
   }
+  $("mods-content").innerHTML = html;
+}
 
-  // ---- builds
+// Bottom action strip: named builds + .variant export/import, game buttons.
+function renderBuildBar(saved) {
+  const names = Object.keys(saved).sort();
+  $("buildbar").innerHTML = `
+    <span class="bb-label">Build</span>
+    <input type="text" id="build-name" placeholder="Build name" value="${esc(S.build.name || "")}">
+    <button data-action="save-build">Save</button>
+    <span class="bb-builds">
+      ${names.map((name, i) => `
+        <span class="bb-chipwrap"><button class="bb-load" data-load="${i}" title="Load this build">${esc(name)} <span class="bb-meta">${esc(saved[name].hullId || "")}</span></button><button class="bb-x" data-del="${i}" title="Delete build">✕</button></span>`).join("")}
+    </span>
+    <span class="bb-spacer"></span>
+    <span class="note">Builds are stored only in this browser.</span>
+    <button data-action="export">Export .variant</button>
+    <button data-action="copy">Copy variant</button>
+    <button data-action="import">Import .variant</button>`;
+}
+
+function renderPanel() {
+  const sh = ship();
+  if (!sh) return;
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(LS_BUILDS) || "{}"); } catch (e) { /* ignore */ }
-  html += `
-    <h3>Builds</h3>
-    <div class="build-row">
-      <input type="text" id="build-name" placeholder="Build name" value="${esc(S.build.name || "")}">
-      <button data-action="save-build">Save</button>
-    </div>
-    <div id="saved-builds">
-      ${Object.keys(saved).sort().map((name, i) => `
-        <div class="saved-build"><span>${esc(name)} <span class="meta">${esc(saved[name].hullId || "")}</span></span>
-          <span><button data-load="${i}">Load</button> <button data-del="${i}">Delete</button></span></div>`).join("")
-        || '<div class="note">No saved builds yet.</div>'}
-    </div>
-    <div class="build-row">
-      <button data-action="export">Export .variant</button>
-      <button data-action="copy">Copy variant</button>
-      <button data-action="import">Import</button>
-    </div>
-    <div class="note">Builds and your current work are stored only in this browser (localStorage). Nothing leaves your machine.</div>
-  `;
-
-  $("panel-content").innerHTML = html;
+  renderInfo();
+  renderMods();
+  renderBuildBar(saved);
+  renderPicker();
   wirePanel(saved);
   hydrateHullmodIcons();
-  hydrateWeaponCards(sel);
+  hydrateWeaponCards(sh.slots.find((s) => s.id === S.selectedSlot) || null);
 }
 
 function hydrateHullmodIcons() {
@@ -1163,22 +1240,61 @@ function hydrateHullmodIcons() {
   }
 }
 
+function refreshPicker() {
+  renderPicker();
+  wirePicker();
+  const sel = ship() ? ship().slots.find((s) => s.id === S.selectedSlot) || null : null;
+  hydrateWeaponCards(sel);
+}
+
+function wirePicker() {
+  const pk = $("picker");
+  if (!pk) return;
+  const close = $("picker-close");
+  if (close) close.addEventListener("click", () => { closePicker(); renderPicker(); });
+  const emptyBtn = pk.querySelector("[data-action='empty-slot']");
+  if (emptyBtn) emptyBtn.addEventListener("click", () => fitWeapon(S.selectedSlot, null));
+  const sel = ship() ? ship().slots.find((s) => s.id === S.selectedSlot) || null : null;
+  for (const row of pk.querySelectorAll("#picker-list [data-fit]")) {
+    const wid = row.dataset.fit;
+    const w = S.data.weapons[wid];
+    row.addEventListener("click", () => fitFromPicker(S.selectedSlot, wid));
+    row.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fitFromPicker(S.selectedSlot, wid); }
+    });
+    if (w && sel) {
+      row.addEventListener("mouseenter", () => showSpecFloat(w, sel, row));
+      row.addEventListener("focus", () => showSpecFloat(w, sel, row));
+      row.addEventListener("mouseleave", hideSpecFloat);
+      row.addEventListener("blur", hideSpecFloat);
+    }
+  }
+  for (const b of pk.querySelectorAll("[data-wsize]")) {
+    b.addEventListener("click", () => { S.weaponSizeFilter = b.dataset.wsize; refreshPicker(); });
+  }
+  const ws = $("weapon-search");
+  if (ws) {
+    ws.addEventListener("input", () => {
+      S.weaponSearch = ws.value;
+      const pos = ws.selectionStart;
+      refreshPicker();
+      const el = $("weapon-search");
+      if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+    });
+  }
+  const wsort = $("weapon-sort");
+  if (wsort) wsort.addEventListener("change", () => { S.weaponSort = wsort.value; refreshPicker(); });
+}
+
 function wirePanel(saved) {
-  const panel = $("panel-content");
-  for (const b of panel.querySelectorAll("[data-step]")) {
+  for (const b of $("info-content").querySelectorAll("[data-step]")) {
     b.addEventListener("click", () => {
       const [field, d] = b.dataset.step.split("|");
       S.build[field] = Math.max(0, Math.min(99, S.build[field] + Number(d)));
       afterBuildChange();
     });
   }
-  for (const b of panel.querySelectorAll("[data-fit]")) {
-    b.addEventListener("click", () => fitWeapon(S.selectedSlot, b.dataset.fit));
-  }
-  for (const b of panel.querySelectorAll("[data-wsize]")) {
-    b.addEventListener("click", () => { S.weaponSizeFilter = b.dataset.wsize; renderPanel(); draw(); });
-  }
-  for (const b of panel.querySelectorAll("[data-hullmod]")) {
+  for (const b of $("mods-content").querySelectorAll("[data-hullmod]")) {
     b.addEventListener("change", () => {
       const mid = b.dataset.hullmod;
       if (b.checked) S.build.hullMods.push(mid);
@@ -1186,7 +1302,7 @@ function wirePanel(saved) {
       afterBuildChange();
     });
   }
-  for (const selEl of panel.querySelectorAll("[data-wing-bay]")) {
+  for (const selEl of $("mods-content").querySelectorAll("[data-wing-bay]")) {
     selEl.addEventListener("change", () => {
       const i = Number(selEl.dataset.wingBay);
       if (!Array.isArray(S.build.wings)) S.build.wings = [];
@@ -1194,27 +1310,12 @@ function wirePanel(saved) {
       afterBuildChange();
     });
   }
-  const emptyBtn = panel.querySelector("[data-action='empty-slot']");
-  if (emptyBtn) emptyBtn.addEventListener("click", () => fitWeapon(S.selectedSlot, null));
-  const ws = $("weapon-search");
-  if (ws) {
-    ws.addEventListener("input", () => {
-      S.weaponSearch = ws.value;
-      const pos = ws.selectionStart;
-      renderPanel();
-      const el = $("weapon-search");
-      if (el) { el.focus(); el.setSelectionRange(pos, pos); }
-      draw();
-    });
-  }
-  const wsort = $("weapon-sort");
-  if (wsort) {
-    wsort.addEventListener("change", () => { S.weaponSort = wsort.value; renderPanel(); draw(); });
-  }
+  // ---- build bar
+  const bar = $("buildbar");
   const bn = $("build-name");
   if (bn) bn.addEventListener("input", () => { S.build.name = bn.value; persistCurrent(); });
   const names = Object.keys(saved).sort();
-  for (const b of panel.querySelectorAll("[data-load]")) {
+  for (const b of bar.querySelectorAll("[data-load]")) {
     b.addEventListener("click", () => {
       const name = names[Number(b.dataset.load)];
       const build = saved[name];
@@ -1223,7 +1324,7 @@ function wirePanel(saved) {
       selectShip(build.hullId, build);
     });
   }
-  for (const b of panel.querySelectorAll("[data-del]")) {
+  for (const b of bar.querySelectorAll("[data-del]")) {
     b.addEventListener("click", () => {
       const name = names[Number(b.dataset.del)];
       const all = JSON.parse(localStorage.getItem(LS_BUILDS) || "{}");
@@ -1232,13 +1333,13 @@ function wirePanel(saved) {
       renderPanel();
     });
   }
-  const act = (name) => panel.querySelector(`[data-action='${name}']`);
+  const act = (name) => bar.querySelector(`[data-action='${name}']`);
   if (act("save-build")) act("save-build").addEventListener("click", saveBuild);
   if (act("export")) act("export").addEventListener("click", exportVariant);
   if (act("copy")) act("copy").addEventListener("click", copyVariant);
   if (act("import")) act("import").addEventListener("click", () => $("import-picker").click());
+  wirePicker();
 }
-
 function afterBuildChange() { persistCurrent(); renderPanel(); draw(); }
 
 function fitWeapon(slotId, weaponId) {
@@ -1736,9 +1837,64 @@ function fleetMemberBuild(member) {
     wings: v.wings || [],
   };
 }
+// ---------------------------------------------------------------- fleet strip
+// When a save is imported, the fleet also renders as a horizontal strip of
+// sprite thumbnails across the top of the stage, like the game's refit
+// fleet row. Clicking a chip opens the ship in the editor (same as the
+// fleet panel row). Rebuilt only when its signature changes, so ordinary
+// panel re-renders don't churn the thumbnails.
+const stripObserver = ("IntersectionObserver" in window)
+  ? new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        stripObserver.unobserve(e.target);
+        fetchJSON(`sprites/${e.target.dataset.thumb}.json`).then((shard) => {
+          if (!e.target.isConnected) return;
+          if (shard && shard.sprite) e.target.src = shard.sprite;
+          else e.target.style.display = "none";
+        });
+      }
+    }, { root: document.getElementById("fleet-strip"), rootMargin: "160px" })
+  : null;
+let stripSig = "";
+function renderFleetStrip() {
+  const strip = $("fleet-strip");
+  if (!strip) return;
+  const sig = S.fleet ? `${S.fleet.fileName}|${S.fleet.members.length}|${S.activeMember}` : "";
+  if (sig === stripSig) return;
+  stripSig = sig;
+  if (!S.fleet) { strip.hidden = true; strip.innerHTML = ""; return; }
+  strip.innerHTML = S.fleet.members.map((m, i) => {
+    const sh = S.data.ships[m.hullId];
+    return `<button class="fleet-chip ${i === S.activeMember ? "active" : ""}" data-member="${i}"
+      ${sh ? "" : "disabled"} title="${sh ? "Open in the refit editor" : "Hull is not in this viewer's data (modded hull?)"}">
+      ${sh && sh.sprite ? `<img data-thumb="${esc(sh.sprite)}" alt="">` : ""}
+      <span class="fc-main"><span class="fc-name">${esc(m.name || (sh ? sh.name : m.hullId))}</span>
+      <span class="fc-sub">${esc(sh ? sh.name : m.hullId)}</span></span></button>`;
+  }).join("");
+  strip.hidden = false;
+  for (const b of strip.querySelectorAll("[data-member]")) {
+    b.addEventListener("click", () => openFleetMember(Number(b.dataset.member)));
+  }
+  if (stripObserver) {
+    for (const img of strip.querySelectorAll("img[data-thumb]")) stripObserver.observe(img);
+  }
+}
+
+function openFleetMember(i) {
+  const m = S.fleet && S.fleet.members[i];
+  if (!m || !S.data.ships[m.hullId]) return;   // unknown hull: note instead of open
+  applyVariant(fleetMemberBuild(m));
+  // applyVariant → selectShip reset the active marker; restore it now
+  S.activeMember = i;
+  renderFleet();
+  renderFleetStrip();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 function renderFleet() {
   const view = $("fleet-view");
-  if (!S.fleet) { view.hidden = true; view.innerHTML = ""; return; }
+  if (!S.fleet) { view.hidden = true; view.innerHTML = ""; renderFleetStrip(); return; }
   const f = S.fleet;
   const rows = f.members.map((m, i) => {
     const sh = S.data.ships[m.hullId];
@@ -1760,7 +1916,7 @@ function renderFleet() {
       wings: build.wings,
     });
     const smodCount = (build.smods || []).length;
-    return `<button class="fleet-member" data-member="${i}" title="Open in the refit editor">
+    return `<button class="fleet-member ${i === S.activeMember ? "active" : ""}" data-member="${i}" title="Open in the refit editor">
       <span class="fm-main"><span class="fm-name">${esc(m.name || sh.name)}</span>
       <span class="fm-sub">${esc(sh.name)} · ${esc(sh.hullSize)} · DP ${sh.dp ?? "?"}</span></span>
       <span class="fm-side"><span class="fm-op ${op.total > op.budget ? "over" : ""}">${op.total} / ${op.budget} OP</span>
@@ -1792,13 +1948,9 @@ function renderFleet() {
   view.hidden = false;
   view.querySelector("#fleet-close").addEventListener("click", () => { S.fleet = null; renderFleet(); });
   for (const b of view.querySelectorAll("[data-member]")) {
-    b.addEventListener("click", () => {
-      const m = f.members[parseInt(b.dataset.member, 10)];
-      if (!S.data.ships[m.hullId]) return;   // unknown hull: note instead of open
-      applyVariant(fleetMemberBuild(m));
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    });
+    b.addEventListener("click", () => openFleetMember(parseInt(b.dataset.member, 10)));
   }
+  renderFleetStrip();
 }
 async function importSaveFile(file) {
   if (!file) return;
@@ -1825,7 +1977,7 @@ async function importSaveFile(file) {
     fleet.fileName = file.name;
     S.fleet = fleet;
     renderFleet();
-    $("panel").scrollTop = 0;
+    $("info-panel").scrollTop = 0;
   } catch (e) {
     console.error("Save import failed:", e);
     alert(`Could not read this save file: ${e.message}`);
@@ -1901,11 +2053,43 @@ function wireUI() {
     if (dragged) { dragged = false; return; }
     const [mx, my] = evtPos(e);
     const slot = slotAt(mx, my);
-    S.selectedSlot = slot ? slot.id : null;
-    S.weaponSearch = "";
-    S.weaponSizeFilter = "ALL";   // size chips reset whenever the slot changes
+    if (slot) {
+      // clicking a slot opens (or retargets) the weapon picker for it
+      if (slot.id !== S.selectedSlot) {
+        S.weaponSearch = "";
+        S.weaponSizeFilter = "ALL";   // size chips reset whenever the slot changes
+      }
+      S.selectedSlot = slot.id;
+      S.pickerOpen = true;
+    } else {
+      // clicking empty stage is the "click away" that closes the picker
+      S.selectedSlot = null;
+      closePicker();
+    }
     renderPanel();
     draw();
+  });
+  // right-click a fitted slot clears it (the game's remove, web-style)
+  cv.addEventListener("contextmenu", (e) => {
+    const [mx, my] = evtPos(e);
+    const slot = slotAt(mx, my);
+    if (slot && !isLocked(slot.id) && S.build.weapons[slot.id]) {
+      e.preventDefault();
+      fitWeapon(slot.id, null);
+    }
+  });
+  // the picker's pinned spec card: right-click clears the current weapon
+  $("picker-pinned").addEventListener("contextmenu", (e) => {
+    const sh = ship();
+    const sel = sh ? sh.slots.find((s) => s.id === S.selectedSlot) : null;
+    if (sel && !isLocked(sel.id) && S.build.weapons[sel.id]) {
+      e.preventDefault();
+      fitWeapon(sel.id, null);
+    }
+  });
+  $("picker-list").addEventListener("scroll", hideSpecFloat);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && S.pickerOpen) { closePicker(); renderPicker(); }
   });
   cv.addEventListener("pointermove", (e) => {
     if (drag) {

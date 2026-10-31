@@ -1,17 +1,25 @@
-/* Starsector Refit Viewer — dark refit-screen theme */
+/* Starsector Refit Viewer — game-fidelity refit-screen kit.
+ * Modeled on the vanilla refit screen: deep blue-teal blueprint stage,
+ * desaturated blue panels with corner accents, saturated blue OP bar,
+ * Orbitron numerals, dark teal rectangular buttons. */
 :root {
-  --bg: #0b0f14;
-  --bg2: #10161e;
-  --bg3: #16202b;
-  --line: #26394a;
+  --bg: #060b11;
+  --bg2: #0a141f;
+  --bg3: #12202e;
+  --panel: #0c1622;
+  --line: #274b63;
+  --line-dim: #1a3040;
+  --accent: #57c7e3;
   --teal: #39c2d7;
   --teal-dim: #1d7d8f;
   --amber: #e8a33d;
-  --green: #7dd069;
+  --yellow: #f2d060;
+  --green: #8fe388;
   --red: #e5534b;
   --text: #c9d6df;
   --text-dim: #7e93a4;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --disp: "Orbitron", "Segoe UI", ui-monospace, var(--mono);
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -20,41 +28,69 @@ body {
   font: 13px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   display: flex; flex-direction: column; overflow: hidden;
 }
+
+/* ---- game panel kit: 1px blue border + corner accents ---- */
+.gpanel {
+  position: relative;
+  background: linear-gradient(180deg, #0e1a29 0%, #0a141f 100%);
+  border: 1px solid var(--line);
+}
+.gpanel::before, .gpanel::after {
+  content: ""; position: absolute; width: 14px; height: 14px; pointer-events: none;
+  border: 0 solid var(--accent); opacity: .75; z-index: 2;
+}
+.gpanel::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+.gpanel::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
+
+/* ---- buttons: dark teal rectangles, uppercase micro-labels ---- */
+button, .btn {
+  background: linear-gradient(180deg, #1d4e5f 0%, #122c38 100%);
+  color: #dff3f8; border: 1px solid #33707f; border-radius: 2px;
+  padding: 5px 12px; cursor: pointer; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .8px; font-weight: 600;
+}
+button:hover { border-color: var(--accent); color: #fff; box-shadow: 0 0 7px rgba(87, 199, 227, .35); }
+button:disabled { opacity: .45; cursor: default; box-shadow: none; }
+button:disabled:hover { border-color: #33707f; color: #dff3f8; }
+
 header#topbar {
   display: flex; justify-content: space-between; align-items: center;
   padding: 6px 12px; background: var(--bg2); border-bottom: 1px solid var(--line);
 }
-.brand { font-family: var(--mono); letter-spacing: 2px; color: var(--teal); font-size: 15px; }
+.brand { font-family: var(--disp); font-weight: 700; letter-spacing: 3px; color: var(--accent); font-size: 15px; }
 .brand span { color: var(--text); }
 .topmeta { display: flex; gap: 14px; align-items: center; color: var(--text-dim); }
 .topmeta .tgl { cursor: pointer; user-select: none; }
 .topmeta input { accent-color: var(--teal); }
 #data-version { font-family: var(--mono); font-size: 11px; }
 
-#layout { flex: 1; display: flex; min-height: 0; }
+#layout { flex: 1; display: flex; min-height: 0; gap: 0; }
 
 /* ---- ship list ---- */
 #shiplist-panel {
-  width: 248px; flex: none; background: var(--bg2); border-right: 1px solid var(--line);
+  width: 248px; flex: none; border-width: 0 1px 0 0;
   display: flex; flex-direction: column; padding: 8px; gap: 8px;
 }
 #ship-search {
   background: var(--bg); border: 1px solid var(--line); color: var(--text);
-  padding: 6px 8px; border-radius: 3px; width: 100%;
+  padding: 6px 8px; border-radius: 2px; width: 100%;
 }
 #size-chips, #tech-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
-  background: var(--bg3); color: var(--text-dim); border: 1px solid var(--line);
-  border-radius: 10px; padding: 2px 9px; cursor: pointer; font-size: 11px;
+  background: #0e1c29; color: var(--text-dim); border: 1px solid var(--line-dim);
+  border-radius: 2px; padding: 3px 8px; cursor: pointer; font-size: 10px;
+  text-transform: uppercase; letter-spacing: .6px; font-weight: 600;
+  box-shadow: none;
 }
-.chip.active { color: #06121a; background: var(--teal); border-color: var(--teal); }
+.chip:hover { border-color: var(--accent); color: var(--text); box-shadow: none; }
+.chip.active { color: #071018; background: var(--accent); border-color: var(--accent); }
 #ship-list { overflow-y: auto; flex: 1; }
 .ship-item {
   padding: 5px 8px; border-left: 3px solid transparent; cursor: pointer;
-  border-bottom: 1px solid #182430;
+  border-bottom: 1px solid #14222f;
 }
 .ship-item:hover { background: var(--bg3); }
-.ship-item.selected { background: var(--bg3); border-left-color: var(--teal); }
+.ship-item.selected { background: #14313a; border-left-color: var(--amber); }
 .ship-item .nm { display: block; font-weight: 600; }
 .ship-item .sub { display: block; color: var(--text-dim); font-size: 11px; }
 .ship-item .sub.mono { font-family: var(--mono); }
@@ -78,110 +114,214 @@ header#topbar {
 }
 .ship-item .tech-line { color: var(--tc, var(--text-dim)); }
 
-/* ---- stage ---- */
-#stage { flex: 1; position: relative; min-width: 0; background:
-  radial-gradient(ellipse at center, #0e1620 0%, var(--bg) 75%); }
-#canvas { display: block; width: 100%; height: 100%; }
-#tooltip {
-  position: absolute; pointer-events: none; z-index: 5;
-  background: rgba(8, 14, 20, .94); border: 1px solid var(--teal-dim);
-  padding: 5px 8px; border-radius: 3px; font-family: var(--mono); font-size: 11px;
-  max-width: 260px; white-space: pre-line;
-}
-#stage-hint {
-  position: absolute; left: 10px; bottom: 8px; color: var(--text-dim);
-  font-size: 11px; pointer-events: none;
-}
-
-/* ---- right panel ---- */
-#panel {
-  width: 348px; flex: none; background: var(--bg2); border-left: 1px solid var(--line);
+/* ---- info (left) and mods (right) columns ---- */
+#info-panel {
+  width: 304px; flex: none; border-width: 0 1px 0 0;
   overflow-y: auto; padding: 10px 12px 16px;
 }
-#panel h2 { margin: 0 0 2px; font-size: 16px; color: #eaf4f9; }
-#panel h3 {
-  margin: 14px 0 6px; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: var(--teal); border-bottom: 1px solid var(--line); padding-bottom: 3px;
+#mods-panel {
+  width: 336px; flex: none; border-width: 0 0 0 1px;
+  overflow-y: auto; padding: 10px 12px 16px;
 }
-#panel .ship-sub { color: var(--text-dim); margin-bottom: 4px; }
+#info-panel h2, #mods-panel h2 { margin: 0 0 2px; font-size: 16px; color: #eaf4f9; }
+#info-panel h3, #mods-panel h3 {
+  margin: 14px 0 6px; font-size: 11px; font-family: var(--disp); font-weight: 700;
+  letter-spacing: 1.8px; text-transform: uppercase;
+  color: var(--accent); border-bottom: 1px solid var(--line-dim); padding-bottom: 3px;
+}
+#info-panel .ship-sub, #mods-panel .ship-sub { color: var(--text-dim); margin-bottom: 4px; }
 .stats-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px;
-  font-family: var(--mono); font-size: 12px;
+  font-size: 12px;
 }
-.stats-grid .k { color: var(--text-dim); }
-.stats-grid .v { text-align: right; color: #eaf4f9; }
+.stats-grid .k {
+  color: var(--text-dim); font-size: 10px; text-transform: uppercase;
+  letter-spacing: .8px; align-self: end;
+}
+.stats-grid .v {
+  text-align: right; color: var(--yellow); font-family: var(--disp);
+  font-size: 13px; font-weight: 700;
+}
+.stats-grid .v.neutral { color: #eaf4f9; }
 
-/* highlighted primary stats (speed / flux capacity / flux dissipation) */
+/* highlighted primary stats (speed / flux capacity / flux dissipation):
+ * the game's label-above-value rows, values big and Orbitron */
 .primary-stats {
   display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 8px 0 10px;
 }
 .pstat {
-  background: var(--bg3); border: 1px solid var(--line); border-top: 2px solid var(--pa, var(--teal));
-  border-radius: 3px; padding: 6px 8px 7px; min-width: 0;
+  background: rgba(18, 32, 46, .65); border: 1px solid var(--line-dim);
+  border-top: 2px solid var(--pa, var(--teal));
+  border-radius: 2px; padding: 6px 8px 7px; min-width: 0;
 }
 .pstat.a-spd { --pa: var(--amber); }
 .pstat.a-cap { --pa: var(--teal); }
 .pstat.a-diss { --pa: var(--green); }
 .pstat .pk {
-  display: block; font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase;
-  color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: block; font-size: 8.5px; letter-spacing: 0.6px; text-transform: uppercase;
+  color: var(--text-dim); line-height: 1.3;
 }
 .pstat .pv {
-  display: block; font-family: var(--mono); font-size: 21px; font-weight: 700;
-  color: var(--pa, #eaf4f9); line-height: 1.2;
+  display: block; font-family: var(--disp); font-size: 20px; font-weight: 700;
+  color: var(--pa, #eaf4f9); line-height: 1.25;
 }
 .pstat .pv .delta { font-size: 12px; font-weight: 600; }
 .delta.pos { color: var(--green); }
 .delta.neg { color: var(--red); }
 
-/* OP bar */
+/* OP bar — the game's wide saturated-blue bar */
 .opbar {
-  display: flex; height: 14px; background: #060a0e; border: 1px solid var(--line);
-  border-radius: 2px; overflow: hidden; margin: 4px 0;
+  position: relative; height: 20px; background: #05090f;
+  border: 1px solid var(--line); border-radius: 2px; overflow: hidden; margin: 4px 0;
 }
-.opbar .seg-weapons { background: var(--amber); }
-.opbar .seg-hullmods { background: #9a6ee8; }
-.opbar .seg-fighters { background: var(--green); }
-.opbar .seg-vents { background: var(--teal); }
-.opbar .seg-caps { background: #4d7dd1; }
-.opbar.over { outline: 1px solid var(--red); }
+.opbar .opfill {
+  height: 100%;
+  background: linear-gradient(180deg, #6fc2f5 0%, #2f9be8 45%, #1c6fb4 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35);
+}
+.opbar.over .opfill { background: linear-gradient(180deg, #f58a7a 0%, #d84a3a 55%, #a82c1e 100%); }
+.opbar .optext {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-family: var(--disp); font-weight: 900; font-size: 13px; letter-spacing: 2px;
+  color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .8);
+}
 .op-legend { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
 .op-legend b { color: var(--text); font-weight: 600; }
 .over-text { color: var(--red); }
 
-/* slot + weapon list */
-.slot-head { font-family: var(--mono); font-size: 12px; margin-bottom: 4px; }
-.slot-head .locked { color: var(--amber); }
-button, .btn {
-  background: var(--bg3); color: var(--text); border: 1px solid var(--line);
-  border-radius: 3px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+/* ---- stage: blueprint grid backdrop ---- */
+#stage {
+  flex: 1; position: relative; min-width: 0; overflow: hidden;
+  background-color: #0a141f;
+  background-image:
+    radial-gradient(ellipse at center, rgba(38, 74, 99, .28) 0%, rgba(6, 11, 17, .0) 78%),
+    linear-gradient(rgba(70, 140, 170, .055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(70, 140, 170, .055) 1px, transparent 1px);
+  background-size: 100% 100%, 28px 28px, 28px 28px;
 }
-button:hover { border-color: var(--teal-dim); color: #fff; }
-button:disabled { opacity: .45; cursor: default; }
+#canvas { display: block; width: 100%; height: 100%; }
+#tooltip {
+  position: absolute; pointer-events: none; z-index: 8;
+  background: rgba(6, 13, 20, .95); border: 1px solid var(--teal-dim);
+  padding: 5px 8px; border-radius: 2px; font-family: var(--mono); font-size: 11px;
+  max-width: 260px; white-space: pre-line; box-shadow: 0 3px 10px rgba(0,0,0,.5);
+}
+#stage-hint {
+  position: absolute; left: 10px; bottom: 8px; color: var(--text-dim);
+  font-size: 11px; pointer-events: none; z-index: 3;
+  text-shadow: 0 1px 2px #000;
+}
+#zoomctl {
+  position: absolute; right: 10px; bottom: 8px; z-index: 4; display: flex; gap: 4px;
+}
+#zoomctl button { font-family: var(--mono); font-size: 12px; padding: 3px 9px; text-transform: none; letter-spacing: 0; }
+
+/* ---- fleet strip: across the top of the stage, game-refit style ---- */
+#fleet-strip {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+  display: flex; gap: 6px; padding: 6px 8px; overflow-x: auto; overflow-y: hidden;
+  background: linear-gradient(180deg, rgba(5, 10, 16, .92) 0%, rgba(5, 10, 16, .72) 78%, rgba(5, 10, 16, 0) 100%);
+  scrollbar-width: thin;
+}
+#fleet-strip[hidden] { display: none; }
+.fleet-chip {
+  flex: none; display: flex; align-items: center; gap: 7px; max-width: 210px;
+  padding: 4px 9px 4px 6px; text-align: left; text-transform: none; letter-spacing: 0;
+  background: linear-gradient(180deg, #10202f, #0a1622);
+  border: 1px solid var(--line-dim); font-weight: 400;
+}
+.fleet-chip:hover { box-shadow: none; border-color: var(--accent); }
+.fleet-chip.active {
+  background: linear-gradient(180deg, #175263, #0f3442);
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--amber);
+}
+.fleet-chip:disabled { opacity: .5; }
+.fleet-chip img { width: 44px; height: 30px; object-fit: contain; flex: none; }
+.fleet-chip .fc-main { display: flex; flex-direction: column; min-width: 0; }
+.fleet-chip .fc-name {
+  font-size: 11px; font-weight: 700; color: #eaf4f9;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fleet-chip .fc-sub {
+  font-size: 10px; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fleet-chip.active .fc-sub { color: #bfe9f5; }
+
+/* ---- weapon picker: slides in over the stage's right side ---- */
+#picker {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 356px; max-width: 94%;
+  z-index: 7; display: flex; flex-direction: column;
+  background: linear-gradient(180deg, rgba(14, 26, 41, .97), rgba(9, 18, 28, .97));
+  border-left: 1px solid var(--accent);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, .55);
+  transform: translateX(103%); transition: transform .18s ease;
+  pointer-events: none;
+}
+#picker.open { transform: none; pointer-events: auto; }
+#picker-head {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+  padding: 9px 10px 7px; border-bottom: 1px solid var(--line-dim);
+}
+#picker-head .slot-head { font-family: var(--mono); font-size: 12px; }
+#picker-head .pk-title {
+  font-family: var(--disp); font-size: 11px; font-weight: 700;
+  letter-spacing: 1.8px; text-transform: uppercase; color: var(--accent); margin-bottom: 3px;
+}
+#picker-close { flex: none; padding: 2px 9px; }
+#picker-pinned { padding: 8px 10px 2px; }
+#picker-controls { padding: 6px 10px 8px; border-bottom: 1px solid var(--line-dim); }
+#picker-list { flex: 1; overflow-y: auto; padding: 4px 6px 8px; }
+.picker-note { padding: 10px; }
+
+.slot-head .locked { color: var(--amber); }
 .weapon-search {
   flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); color: var(--text);
-  padding: 5px 8px; border-radius: 3px;
+  padding: 5px 8px; border-radius: 2px;
 }
 .weapon-controls { display: flex; gap: 6px; margin: 4px 0; }
 .weapon-controls select, .topmeta select {
   background: var(--bg); border: 1px solid var(--line); color: var(--text);
-  padding: 4px 6px; border-radius: 3px; font-size: 12px;
+  padding: 4px 6px; border-radius: 2px; font-size: 12px;
 }
-.weapon-list { max-height: 430px; overflow-y: auto; border: 1px solid #182430; }
+.weapon-size-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
 
-/* weapon spec cards (game-style) */
-.weapon-card {
-  padding: 6px 8px; border-bottom: 1px solid #141e28; cursor: pointer; font-size: 12px;
+/* compact picker rows; the full spec card floats on hover/focus */
+.weapon-row2 {
+  display: flex; align-items: center; gap: 8px; padding: 5px 7px;
+  border-bottom: 1px solid #13222f; cursor: pointer; font-size: 12px;
+  outline: none;
 }
-.weapon-card:hover { background: var(--bg3); }
-.weapon-card.fitted { background: #14313a; cursor: default; }
-.weapon-list .weapon-card.fitted { cursor: pointer; }
+.weapon-row2:hover, .weapon-row2:focus-visible { background: #17303f; }
+.weapon-row2.fitted { background: #14313a; }
+.weapon-row2 .wr-img { width: 46px; height: 30px; flex: none; object-fit: contain; }
+.weapon-row2 .wr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.weapon-row2 .wr-name {
+  font-weight: 600; color: #eaf4f9;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.weapon-row2 .wr-sub {
+  color: var(--text-dim); font-family: var(--mono); font-size: 10.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.weapon-row2 .wr-op {
+  font-family: var(--disp); font-weight: 700; color: var(--amber);
+  font-size: 12px; white-space: nowrap;
+}
+
+/* weapon spec cards (game-style) — docked in the picker pin + floating */
+.weapon-card {
+  padding: 6px 8px; border-bottom: 1px solid #141e28; font-size: 12px;
+  background: rgba(10, 20, 31, .6);
+}
+.weapon-card.fitted { background: #14313a; }
 .wc-head { display: flex; gap: 8px; align-items: flex-start; }
 .wc-img { width: 52px; height: 34px; flex: none; object-fit: contain; }
 .wc-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .wc-name { font-weight: 700; color: #eaf4f9; }
 .wc-role { color: var(--amber); font-size: 11px; font-style: italic; }
-.wc-op { font-family: var(--mono); color: var(--amber); font-weight: 700; white-space: nowrap; }
+.wc-op { font-family: var(--disp); color: var(--amber); font-weight: 700; white-space: nowrap; }
 .pips { display: flex; gap: 4px; align-items: center; }
 .pip {
   font-family: var(--mono); font-size: 10px; font-weight: 700; line-height: 1;
@@ -197,6 +337,19 @@ button:disabled { opacity: .45; cursor: default; }
 .wc-grid .k { color: var(--text-dim); }
 .wc-grid .v { text-align: right; color: #dfeaf1; }
 .wc-desc { color: var(--text-dim); font-size: 11px; margin-top: 4px; white-space: pre-line; }
+
+/* floating spec card (game tooltip style) */
+#spec-float {
+  position: fixed; z-index: 40; width: 344px; max-width: calc(100vw - 16px);
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(13, 24, 38, .98), rgba(8, 16, 25, .98));
+  border: 1px solid var(--accent);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .65);
+}
+#spec-float[hidden] { display: none; }
+#spec-float .weapon-card { border-bottom: none; background: transparent; }
+
+/* legacy rows (unused by V5 markup, kept for safety) */
 .weapon-row {
   display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px;
   cursor: pointer; border-bottom: 1px solid #141e28; font-size: 12px;
@@ -206,7 +359,7 @@ button:disabled { opacity: .45; cursor: default; }
 .weapon-row .wname { font-weight: 600; }
 .weapon-row .wstats { color: var(--text-dim); font-family: var(--mono); font-size: 11px; text-align: right; }
 .fitted-box {
-  background: var(--bg3); border: 1px solid var(--line); border-radius: 3px;
+  background: var(--bg3); border: 1px solid var(--line); border-radius: 2px;
   padding: 6px 8px; font-size: 12px; margin-bottom: 6px;
 }
 .fitted-box .fname { font-weight: 700; color: #eaf4f9; }
@@ -214,23 +367,40 @@ button:disabled { opacity: .45; cursor: default; }
 
 /* steppers */
 .stepper { display: flex; align-items: center; gap: 8px; font-family: var(--mono); }
-.stepper button { width: 26px; padding: 2px 0; }
-.stepper .val { min-width: 26px; text-align: center; color: #eaf4f9; }
+.stepper button { width: 26px; padding: 2px 0; text-transform: none; }
+.stepper .val {
+  min-width: 26px; text-align: center; color: var(--yellow);
+  font-family: var(--disp); font-weight: 700;
+}
 
-/* builds */
-.build-row { display: flex; gap: 6px; margin: 4px 0; flex-wrap: wrap; }
-.build-row input[type=text] {
-  flex: 1; min-width: 110px; background: var(--bg); border: 1px solid var(--line);
-  color: var(--text); padding: 5px 8px; border-radius: 3px;
+/* ---- build action strip (bottom, game buttons) ---- */
+#buildbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 6px 12px; background: var(--bg2); border-top: 1px solid var(--line);
 }
-.saved-build {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 4px 8px; border-bottom: 1px solid #141e28; font-size: 12px;
+#buildbar .bb-label {
+  font-family: var(--disp); font-size: 10px; font-weight: 700;
+  letter-spacing: 1.8px; text-transform: uppercase; color: var(--accent);
 }
-.saved-build .meta { color: var(--text-dim); font-family: var(--mono); font-size: 11px; }
+#buildbar input[type=text] {
+  width: 170px; background: var(--bg); border: 1px solid var(--line);
+  color: var(--text); padding: 5px 8px; border-radius: 2px;
+}
+#buildbar .bb-builds { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.bb-chipwrap { display: inline-flex; }
+.bb-chipwrap .bb-load { border-radius: 2px 0 0 2px; }
+.bb-chipwrap .bb-x {
+  border-radius: 0 2px 2px 0; border-left: none; padding: 5px 7px;
+}
+.bb-meta { color: var(--text-dim); font-family: var(--mono); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+#buildbar .bb-spacer { flex: 1; }
+#buildbar .note { font-size: 11px; }
+.build-row { display: flex; gap: 6px; margin: 4px 0; flex-wrap: wrap; align-items: center; }
 .note { color: var(--text-dim); font-size: 12px; }
 .flux-ok { color: var(--green); }
 .flux-bad { color: var(--red); }
+
+/* ---- hull features & mods (right column) ---- */
 .hullmod-row { display: block; padding: 2px 0; font-size: 12px; cursor: pointer; }
 .hullmod-row input { accent-color: var(--teal); }
 .hullmod-row.blocked { opacity: .55; cursor: default; }
@@ -238,35 +408,29 @@ button:disabled { opacity: .45; cursor: default; }
 .hm-block { display: block; color: var(--red); font-size: 10px; }
 .stats-grid .v .delta.pos { color: var(--green); }
 .stats-grid .v .delta.neg { color: var(--red); }
-
-/* zoom controls */
-#zoomctl {
-  position: absolute; right: 10px; bottom: 8px; z-index: 4; display: flex; gap: 4px;
-}
-#zoomctl button { font-family: var(--mono); font-size: 12px; padding: 3px 9px; }
-
-/* hullmod picker (icons + scroll) and fighter bays */
-.hullmod-list { max-height: 330px; overflow-y: auto; border: 1px solid #182430; padding: 4px 6px; }
+.hullmod-list { max-height: 430px; overflow-y: auto; border: 1px solid var(--line-dim); padding: 4px 6px; }
 .hullmod-row { display: flex; align-items: center; gap: 6px; }
 .hullmod-row .hm-name { flex: 1; min-width: 0; }
 .hm-icon { width: 20px; height: 20px; flex: none; object-fit: contain; }
+.hullmod-row .hm-cost {
+  font-family: var(--disp); font-weight: 700; color: var(--yellow); font-size: 12px; white-space: nowrap;
+}
+.hullmod-row .hm-cost.free { color: var(--text-dim); font-family: var(--mono); font-weight: 400; font-size: 11px; }
 .wing-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
 .wing-row .wing-bay { font-family: var(--mono); color: var(--text-dim); min-width: 44px; flex: none; }
 .wing-row select {
   flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line);
-  color: var(--text); padding: 4px 6px; border-radius: 3px; font-size: 12px;
+  color: var(--text); padding: 4px 6px; border-radius: 2px; font-size: 12px;
 }
 .wing-locked .locked { color: var(--amber); font-family: var(--mono); font-size: 11px; }
 
 /* ---- save import / fleet view ---- */
 .topbtn {
-  background: var(--bg3); border: 1px solid var(--teal-dim); color: var(--teal);
-  border-radius: 3px; padding: 3px 10px; cursor: pointer; font-size: 12px;
+  border-color: var(--teal-dim); color: var(--accent);
 }
-.topbtn:hover { color: #fff; border-color: var(--teal); }
 #fleet-view {
-  border: 1px solid var(--line); border-left: 3px solid var(--teal);
-  background: var(--bg3); border-radius: 3px; padding: 8px 10px; margin-bottom: 12px;
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  background: var(--bg3); border-radius: 2px; padding: 8px 10px; margin-bottom: 12px;
 }
 #fleet-view .fleet-head { display: flex; justify-content: space-between; align-items: center; }
 #fleet-view .fleet-head h3 { margin: 0; border-bottom: none; padding-bottom: 0; }
@@ -275,18 +439,23 @@ button:disabled { opacity: .45; cursor: default; }
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0;
 }
 .fleet-summary .fs-cell {
-  background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 4px 7px;
+  background: var(--bg); border: 1px solid var(--line-dim); border-radius: 2px; padding: 4px 7px;
 }
 .fleet-summary .fs-k { display: block; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
-.fleet-summary .fs-v { display: block; font-family: var(--mono); font-size: 14px; color: #eaf4f9; }
-.fleet-members { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.fleet-summary .fs-v { display: block; font-family: var(--disp); font-size: 14px; font-weight: 700; color: var(--yellow); }
+.fleet-members {
+  display: flex; flex-direction: column; gap: 4px; margin: 6px 0;
+  max-height: 44vh; overflow-y: auto; padding-right: 2px;
+}
 .fleet-member {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
   width: 100%; text-align: left; padding: 5px 8px;
-  background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--line);
-  border-radius: 3px; cursor: pointer; color: var(--text);
+  background: var(--bg); border: 1px solid var(--line-dim); border-left: 3px solid var(--line-dim);
+  border-radius: 2px; cursor: pointer; color: var(--text);
+  text-transform: none; letter-spacing: 0; font-weight: 400;
 }
-.fleet-member:hover { border-left-color: var(--teal); }
+.fleet-member:hover { border-left-color: var(--accent); box-shadow: none; }
+.fleet-member.active { border-left-color: var(--amber); background: #14313a; }
 .fleet-member:disabled { opacity: .55; cursor: default; }
 .fleet-member .fm-main, .fleet-member .fm-side { display: flex; flex-direction: column; min-width: 0; }
 .fleet-member .fm-side { text-align: right; flex: none; }
@@ -299,14 +468,13 @@ button:disabled { opacity: .45; cursor: default; }
   font-family: var(--mono); font-size: 10px; font-weight: 700; padding: 0 4px; margin-right: 3px;
 }
 .hullmod-row.smod .hm-name { color: var(--amber); }
-.weapon-size-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
 #drop-overlay, #save-busy {
   position: fixed; inset: 0; background: rgba(4, 8, 12, .82); z-index: 60;
   display: flex; align-items: center; justify-content: center;
 }
 #drop-overlay[hidden], #save-busy[hidden] { display: none; }
 #drop-overlay .drop-card, #save-busy .drop-card {
-  background: var(--bg2); border: 1px dashed var(--teal); border-radius: 4px;
+  background: var(--bg2); border: 1px dashed var(--accent); border-radius: 3px;
   padding: 22px 28px; text-align: center; font-size: 14px; color: #eaf4f9;
   pointer-events: none;
 }
@@ -321,15 +489,20 @@ footer#footer {
 }
 #load-error[hidden] { display: none; }
 .load-card {
-  background: var(--bg2); border: 1px solid var(--teal-dim); border-radius: 4px;
+  background: var(--bg2); border: 1px solid var(--teal-dim); border-radius: 3px;
   padding: 18px 22px; max-width: 480px;
 }
 .load-card code { color: var(--teal); }
 
+@media (max-width: 1100px) {
+  #info-panel { width: 264px; }
+  #mods-panel { width: 288px; }
+}
 @media (max-width: 900px) {
   body { overflow: auto; }
   #layout { flex-direction: column; }
   #shiplist-panel { width: 100%; max-height: 220px; }
-  #stage { min-height: 46vh; }
-  #panel { width: 100%; }
+  #info-panel, #mods-panel { width: 100%; }
+  #stage { min-height: 52vh; }
+  #picker { width: min(356px, 94vw); }
 }
