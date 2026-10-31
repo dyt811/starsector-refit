@@ -216,6 +216,46 @@ header#topbar {
 }
 #zoomctl button { font-family: var(--mono); font-size: 12px; padding: 3px 9px; text-transform: none; letter-spacing: 0; }
 
+/* ---- test flight: HUD + touch controls ---- */
+#flight-btn.active { border-color: var(--amber); color: var(--amber); }
+#flight-hud {
+  position: absolute; left: 10px; bottom: 30px; z-index: 6; width: 178px;
+  background: linear-gradient(180deg, rgba(14, 26, 41, .93), rgba(10, 20, 31, .93));
+  border: 1px solid var(--line); padding: 8px 10px;
+}
+#flight-hud[hidden] { display: none; }
+.fh-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+#fh-name {
+  font-size: 11px; font-weight: 700; color: #eaf4f9;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fh-mode { font-family: var(--mono); font-size: 9px; color: var(--amber); letter-spacing: 1px; flex: none; }
+.fh-spdrow { display: flex; align-items: baseline; gap: 5px; margin: 2px 0 4px; }
+.fh-spd { font-family: var(--disp); font-size: 30px; font-weight: 700; color: var(--accent); line-height: 1; }
+.fh-unit { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+.fh-grid { display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; font-size: 11px; }
+.fh-grid .k { color: var(--text-dim); }
+.fh-grid .v { font-family: var(--mono); color: var(--text); text-align: right; }
+.fh-tgl { display: flex; align-items: center; gap: 5px; margin-top: 6px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
+.fh-tgl input { accent-color: var(--teal); }
+#flight-reset { margin-top: 6px; width: 100%; font-size: 11px; padding: 3px 0; }
+#flight-touch { display: none; }
+@media (pointer: coarse), (max-width: 860px) {
+  #stage.flight #flight-touch {
+    display: block; position: absolute; inset: 0; z-index: 6; pointer-events: none;
+  }
+}
+.ft-cluster { position: absolute; bottom: 118px; display: flex; gap: 10px; }
+.ft-left { left: 12px; }
+.ft-right { right: 12px; }
+.ft-cluster button {
+  pointer-events: auto; width: 58px; height: 58px; border-radius: 50%;
+  font-size: 20px; color: var(--accent); background: rgba(10, 20, 31, .55);
+  border: 1px solid var(--teal-dim); touch-action: none;
+  user-select: none; -webkit-user-select: none;
+}
+.ft-cluster button:active { background: rgba(29, 125, 143, .5); color: #fff; }
+
 /* ---- fleet strip: across the top of the stage, game-refit style ---- */
 #fleet-strip {
   position: absolute; top: 0; left: 0; right: 0; z-index: 5;

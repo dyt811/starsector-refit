@@ -284,6 +284,49 @@ the selected slot — sizes too big for the slot are hidden (a SMALL slot
 offers only All + Small) — and compose with the search box and sort;
 the filter resets to All whenever a different slot is selected.
 
+## Test flight
+
+**Test flight** (top bar) turns the stage into a flight sandbox for the
+currently selected ship and build; **Back to refit** (or Esc) returns to
+the editor with the build exactly as it was — flight never modifies the
+build. It exists so hullmods can be *felt*, not just read: fit Unstable
+Injector, Auxiliary Thrusters, or Safety Overrides in the mods column
+mid-flight and the ship's handling changes under you, because every
+number comes from the same hullmod-effects machinery as the stats panel
+(`effShipStat` over max speed, acceleration, deceleration, max turn
+rate, and turn acceleration).
+
+**Controls** — W/↑ thrust · S/↓ brake/reverse · A/D or ←/→ turn ·
+Q/E strafe · R reset position · Esc exit. Wheel and the stage buttons
+still zoom; the camera follows the ship across an unbounded blueprint
+grid (50-unit cells, origin axes brighter). The HUD shows current
+speed, effective max speed, heading, turn rate, and acceleration, plus
+a velocity vector on the stage (one second of travel). Fitted weapons
+and their arcs/ranges — at hullmod-effective ranges — rotate with the
+ship; the ranges shown follow the selected slot if one is fitted, else
+all fitted weapons. On touch screens, hold-to-apply turn/thrust/brake
+buttons appear.
+
+**Flight model** — state is position, a velocity vector, heading, and
+angular velocity, integrated per animation frame (dt clamped to
+50 ms). Thrust accelerates along the heading; turning spins angular
+velocity up (and back down) at turn acceleration, capped at max turn
+rate. Thrust and strafing cannot push the ship past its effective max
+speed (acceleration that would cross the cap is clipped to it); below
+the cap there is *no drag* — coasting preserves velocity, which is the
+game's drift feel. If the cap drops mid-flight (a speed hullmod is
+removed), speed bleeds back down at half the deceleration. Braking
+kills the whole velocity vector at the deceleration stat; from a
+standstill it becomes reverse thrust capped at max(10, 25% of max
+speed).
+
+**Deliberate simplifications** (v1): strafing uses the ship's plain
+acceleration (the game derives strafe thrust from the same stat with
+its own factors); the speed cap is enforced by clipping rather than
+the game's per-component projection. **Out of scope**: ship systems
+(burn drive, maneuvering jets…), the zero-flux speed boost, weapon
+fire and flux, collisions, and AI.
+
 ## Privacy
 
 Everything is client-side. Builds live in `localStorage`

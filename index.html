@@ -15,6 +15,7 @@
   <div class="topmeta">
     <span id="data-version"></span>
     <button id="import-save-btn" class="topbtn" title="Analyze a Starsector campaign.xml — read-only, parsed locally, never uploaded">Import save…</button>
+    <button id="flight-btn" class="topbtn" title="Fly the current ship + build with its real (hullmod-modified) movement stats">Test flight</button>
     <label class="tgl">Ranges
       <select id="ranges-mode">
         <option value="selected" selected>Selected</option>
@@ -63,6 +64,28 @@
       <button id="zoom-in" title="Zoom in">+</button>
       <button id="zoom-fit" title="Fit the whole ship">Fit ship</button>
       <button id="zoom-range" title="Zoom out to frame the longest weapon range">Fit range</button>
+    </div>
+    <div id="flight-hud" hidden>
+      <div class="fh-head"><span id="fh-name"></span><span class="fh-mode">TEST FLIGHT</span></div>
+      <div class="fh-spdrow"><span class="fh-spd" id="fh-spd">0.0</span><span class="fh-unit">su/s</span></div>
+      <div class="fh-grid">
+        <span class="k">Max speed</span><span class="v" id="fh-max">—</span>
+        <span class="k">Heading</span><span class="v" id="fh-hdg">000°</span>
+        <span class="k">Turn rate</span><span class="v" id="fh-turn">0°/s</span>
+        <span class="k">Accel</span><span class="v" id="fh-acc">—</span>
+      </div>
+      <label class="fh-tgl"><input type="checkbox" id="fh-ranges" checked> Show ranges in flight</label>
+      <button id="flight-reset" type="button">Reset position (R)</button>
+    </div>
+    <div id="flight-touch" aria-hidden="true">
+      <div class="ft-cluster ft-left">
+        <button type="button" data-tc="left" title="Turn left">◀</button>
+        <button type="button" data-tc="right" title="Turn right">▶</button>
+      </div>
+      <div class="ft-cluster ft-right">
+        <button type="button" data-tc="thrust" title="Thrust">▲</button>
+        <button type="button" data-tc="brake" title="Brake / reverse">▼</button>
+      </div>
     </div>
     <div id="stage-hint">Click a slot for the weapon picker · right-click clears · Esc closes · wheel zooms · drag pans</div>
   </main>

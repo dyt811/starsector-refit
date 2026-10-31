@@ -59,6 +59,7 @@ const S = {
   weaponSort: "op",
   weaponSizeFilter: "ALL",   // weapon picker size chips (ALL/SMALL/MEDIUM/LARGE)
   fleet: null,               // parsed save fleet — session only, never persisted
+  flight: null,              // test-flight sandbox state (null unless flying)
   show: { ranges: "selected", sprites: true, labels: false },
   cam: { z: 1, px: 0, py: 0 },   // zoom/pan over the fit transform
   shipImg: null,          // HTMLImageElement | null
@@ -269,6 +270,8 @@ function selectShip(shipId, savedBuild) {
     const wid = S.build.weapons[slot.id];
     if (wid) ensureWeaponImage(wid, slot);
   }
+  // switching hulls mid-flight restarts the sandbox on the new hull
+  if (S.flight && S.flight.active) resetFlight();
 }
 function persistCurrent() {
   try {
@@ -479,6 +482,7 @@ function resizeCanvas() {
 function draw() {
   const cv = $("canvas");
   if (!cv || !S.data || !S.shipId) return;
+  if (S.flight && S.flight.active) { drawFlight(); return; }
   const ctx = cv.getContext("2d");
   const W = cv.width, H = cv.height;
   const dpr = window.devicePixelRatio || 1;
@@ -2012,6 +2016,412 @@ function wireSaveImport() {
   });
 }
 
+// ---------------------------------------------------------------- test flight
+// A flight sandbox on the refit stage: the current ship + build, flown with
+// the game's own movement numbers, hullmod-modified through the exact same
+// effShipStat machinery the stats panel uses — fit Unstable Injector in the
+// mods column mid-flight and the ship's top speed changes under you. The
+// build itself is never touched: entering/exiting only toggles S.flight.
+// Model notes and deliberate approximations are in README ("Test flight").
+const FLIGHT_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+
+function flightStats() {
+  const agg = computeModAgg();
+  return {
+    maxSpeed: effShipStat("maxSpeed", agg) || 0,
+    accel: effShipStat("acceleration", agg) || 0,
+    decel: effShipStat("deceleration", agg) || 0,
+    maxTurn: effShipStat("maxTurnRate", agg) || 0,
+    turnAccel: effShipStat("turnAcceleration", agg) || 0,
+  };
+}
+
+function enterFlight() {
+  if (!S.shipId || !ship()) return;
+  if (S.flight && S.flight.active) return;
+  closePicker();
+  $("tooltip").hidden = true;
+  const f = {
+    active: true,
+    x: 0, y: 0, vx: 0, vy: 0, facing: 0, omega: 0,
+    camX: 0, camY: 0,
+    speed: 0, maxSpeed: 0, stats: flightStats(),
+    keys: new Set(),
+    touch: { left: false, right: false, thrust: false, brake: false },
+    showRanges: true,
+    lastT: performance.now(), raf: 0,
+  };
+  S.flight = f;
+  window.__flight = f;   // debug/test handle
+  $("stage").classList.add("flight");
+  $("flight-hud").hidden = false;
+  const btn = $("flight-btn");
+  btn.textContent = "Back to refit";
+  btn.classList.add("active");
+  $("stage-hint").textContent =
+    "W/↑ thrust · S/↓ brake · A/D or ←/→ turn · Q/E strafe · R reset · Esc exit";
+  updateFlightHud();
+  f.raf = requestAnimationFrame(flightTick);
+  draw();
+}
+
+function exitFlight() {
+  const f = S.flight;
+  if (!f || !f.active) return;
+  f.active = false;
+  cancelAnimationFrame(f.raf);
+  f.keys.clear();
+  S.cam.px = 0; S.cam.py = 0;   // flight zoom (z) carries back; pan does not
+  $("stage").classList.remove("flight");
+  $("flight-hud").hidden = true;
+  const btn = $("flight-btn");
+  btn.textContent = "Test flight";
+  btn.classList.remove("active");
+  $("stage-hint").textContent =
+    "Click a slot for the weapon picker · right-click clears · Esc closes · wheel zooms · drag pans";
+  draw();
+}
+
+function resetFlight() {
+  const f = S.flight;
+  if (!f) return;
+  f.x = 0; f.y = 0; f.vx = 0; f.vy = 0; f.omega = 0; f.facing = 0;
+  f.camX = 0; f.camY = 0; f.speed = 0;
+}
+
+function stepFlight(dt) {
+  const f = S.flight;
+  const st = flightStats();           // live: hullmod edits apply mid-flight
+  f.stats = st;
+  f.maxSpeed = st.maxSpeed;
+  const k = f.keys, tc = f.touch;
+  const left = k.has("KeyA") || k.has("ArrowLeft") || tc.left;
+  const right = k.has("KeyD") || k.has("ArrowRight") || tc.right;
+  const thrust = k.has("KeyW") || k.has("ArrowUp") || tc.thrust;
+  const brake = k.has("KeyS") || k.has("ArrowDown") || tc.brake;
+
+  // ---- turning: angular velocity spins up/down at turnAcceleration,
+  // ---- capped at maxTurnRate (the game's model)
+  if (left && !right) f.omega -= st.turnAccel * dt;
+  else if (right && !left) f.omega += st.turnAccel * dt;
+  else if (f.omega > 0) f.omega = Math.max(0, f.omega - st.turnAccel * dt);
+  else if (f.omega < 0) f.omega = Math.min(0, f.omega + st.turnAccel * dt);
+  f.omega = Math.max(-st.maxTurn, Math.min(st.maxTurn, f.omega));
+  f.facing = (((f.facing + f.omega * dt) % 360) + 360) % 360;
+
+  const [fx, fy] = dirVec(f.facing);        // forward unit vector (world)
+  const rx = -fy, ry = fx;                  // right unit vector
+
+  // ---- thrust / strafe: acceleration, but never past the speed cap
+  const applyAccel = (ax, ay) => {
+    if (st.maxSpeed <= 0) return;
+    let nvx = f.vx + ax * dt, nvy = f.vy + ay * dt;
+    const ns = Math.hypot(nvx, nvy);
+    if (ns > st.maxSpeed) {
+      if (Math.hypot(f.vx, f.vy) >= st.maxSpeed) return;  // at cap: no gain
+      const s = st.maxSpeed / ns; nvx *= s; nvy *= s;     // clip to the cap
+    }
+    f.vx = nvx; f.vy = nvy;
+  };
+  if (thrust) applyAccel(fx * st.accel, fy * st.accel);
+  if (k.has("KeyE")) applyAccel(rx * st.accel, ry * st.accel);
+  if (k.has("KeyQ")) applyAccel(-rx * st.accel, -ry * st.accel);
+
+  // ---- brake: kill the velocity vector at deceleration; from a standstill
+  // ---- it becomes reverse thrust, capped at max(10, 25% of max speed)
+  if (brake) {
+    const sp = Math.hypot(f.vx, f.vy);
+    if (sp > 0) {
+      const d = st.decel * dt;
+      if (d >= sp) { f.vx = 0; f.vy = 0; }
+      else { const s = (sp - d) / sp; f.vx *= s; f.vy *= s; }
+    } else if (st.decel > 0) {
+      const revCap = Math.max(10, 0.25 * st.maxSpeed);
+      let back = -(f.vx * fx + f.vy * fy);
+      if (back < revCap) {
+        f.vx -= fx * st.decel * dt;
+        f.vy -= fy * st.decel * dt;
+        back = -(f.vx * fx + f.vy * fy);
+        if (back > revCap) { f.vx += fx * (back - revCap); f.vy += fy * (back - revCap); }
+      }
+    }
+  }
+
+  // ---- over the cap (e.g. a speed hullmod was just removed): bleed back
+  // ---- down at half the deceleration. At/under the cap there is NO drag —
+  // ---- coasting keeps your velocity, which is the game's feel.
+  const sp2 = Math.hypot(f.vx, f.vy);
+  if (sp2 > st.maxSpeed && st.maxSpeed > 0) {
+    const ns = Math.max(st.maxSpeed, sp2 - st.decel * 0.5 * dt);
+    const s = ns / sp2; f.vx *= s; f.vy *= s;
+  }
+
+  f.x += f.vx * dt;
+  f.y += f.vy * dt;
+  f.speed = Math.hypot(f.vx, f.vy);
+
+  // ---- camera: exponential follow on the ship
+  const t = 1 - Math.exp(-5 * dt);
+  f.camX += (f.x - f.camX) * t;
+  f.camY += (f.y - f.camY) * t;
+}
+
+function flightTick(t) {
+  const f = S.flight;
+  if (!f || !f.active) return;
+  let dt = (t - f.lastT) / 1000;
+  f.lastT = t;
+  if (!(dt > 0)) dt = 0;
+  if (dt > 0.05) dt = 0.05;
+  stepFlight(dt);
+  draw();
+  updateFlightHud();
+  f.raf = requestAnimationFrame(flightTick);
+}
+
+function updateFlightHud() {
+  const f = S.flight;
+  if (!f) return;
+  const sh = ship();
+  $("fh-name").textContent = sh ? sh.name : "";
+  $("fh-spd").textContent = f.speed.toFixed(1);
+  $("fh-max").textContent = fmt(f.maxSpeed, 1);
+  const hdg = ((f.facing % 360) + 360) % 360;
+  $("fh-hdg").textContent = String(Math.round(hdg) % 360).padStart(3, "0") + "°";
+  $("fh-turn").textContent = (f.omega > 0 ? "+" : "") + f.omega.toFixed(0) + "°/s";
+  $("fh-acc").textContent = fmt((f.stats || {}).accel, 1);
+}
+
+// The flight renderer: same sprite/slot geometry as the refit draw, but in a
+// scrolling world — the ship sits at (f.x, f.y) rotated to its heading, the
+// camera follows, and ranges are drawn in world space off the rotated slots.
+function drawFlight() {
+  const cv = $("canvas");
+  const ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  const dpr = window.devicePixelRatio || 1;
+  ctx.clearRect(0, 0, W, H);
+  const sh = ship();
+  const f = S.flight;
+  const agg = computeModAgg();
+
+  const effW = S.shipImg ? S.shipImg.naturalWidth : (sh.width || (sh.collisionRadius || 100) * 2);
+  const effH = S.shipImg ? S.shipImg.naturalHeight : (sh.height || (sh.collisionRadius || 100) * 2);
+  const fitScale = Math.min((W - 30) / effW, (H - 30) / effH);
+  const scale = fitScale * S.cam.z;
+  S.view = { scale: fitScale, ox: 0, oy: 0, effW, effH };
+  S.slotScreen = [];
+
+  const toScreen = (wx, wy) => [W / 2 + (wx - f.camX) * scale, H / 2 + (wy - f.camY) * scale];
+  const [scx, scy] = toScreen(f.x, f.y);
+  const th = f.facing * Math.PI / 180;
+  const cosT = Math.cos(th), sinT = Math.sin(th);
+  // slot position in world space: ship-local offset is (slot.y, -slot.x)
+  // in sprite pixels (lateral, -forward), rotated by the heading
+  const slotScreen = (slot) => {
+    const lx = slot.y, ly = -slot.x;
+    return toScreen(f.x + lx * cosT - ly * sinT, f.y + lx * sinT + ly * cosT);
+  };
+
+  // ---- world blueprint grid: 50-unit cells from the world origin, axis
+  // ---- lines through the origin drawn brighter
+  const step = 50 * scale;
+  if (step > 9) {
+    const wl = f.camX - (W / 2) / scale, wr = f.camX + (W / 2) / scale;
+    const wt = f.camY - (H / 2) / scale, wb = f.camY + (H / 2) / scale;
+    ctx.save();
+    ctx.lineWidth = 1;
+    for (let gx = Math.ceil(wl / 50) * 50; gx <= wr; gx += 50) {
+      const sx = toScreen(gx, 0)[0];
+      ctx.strokeStyle = gx === 0 ? "rgba(120,170,200,.22)" : "rgba(120,170,200,.07)";
+      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
+    }
+    for (let gy = Math.ceil(wt / 50) * 50; gy <= wb; gy += 50) {
+      const sy = toScreen(0, gy)[1];
+      ctx.strokeStyle = gy === 0 ? "rgba(120,170,200,.22)" : "rgba(120,170,200,.07)";
+      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(W, sy); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ---- range wedges at effective range, rotated with the ship
+  const wedgeF = (sx, sy, angleDeg, arcDeg, rangeWorld, color, alpha, ring) => {
+    const R = rangeWorld * scale;
+    const a0 = (angleDeg - arcDeg / 2) * Math.PI / 180;
+    const a1 = (angleDeg + arcDeg / 2) * Math.PI / 180;
+    const c0 = Math.atan2(-Math.cos(a0), Math.sin(a0));
+    const c1 = Math.atan2(-Math.cos(a1), Math.sin(a1));
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.arc(sx, sy, R, c0, c1, false);
+    ctx.closePath();
+    ctx.fillStyle = color; ctx.globalAlpha = alpha; ctx.fill(); ctx.globalAlpha = 1;
+    if (ring) {
+      ctx.beginPath();
+      ctx.arc(sx, sy, R, c0, c1, false);
+      ctx.strokeStyle = color; ctx.globalAlpha = 0.85;
+      ctx.lineWidth = Math.max(1.2, dpr); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+  };
+  if (f.showRanges) {
+    const selSlot = sh.slots.find((s) => s.id === S.selectedSlot) || null;
+    const selW = selSlot ? fittedWeapon(selSlot) : null;
+    for (const slot of sh.slots) {
+      if (slot.type === "DECORATIVE" || slot.type === "SYSTEM" || slot.type === "LAUNCH_BAY") continue;
+      const w = fittedWeapon(slot);
+      if (!w) continue;
+      const r = effectiveRange(w, slot, agg);
+      if (r === null) continue;
+      const [sx, sy] = slotScreen(slot);
+      const col = TYPE_COLORS[slot.type] || "#888";
+      const wa = f.facing + slot.angle;
+      if (selW && slot.id === selSlot.id) {
+        wedgeF(sx, sy, wa, slot.arc, r, col, 0.15, true);
+        const [dx, dy] = dirVec(wa);
+        const tx = sx + dx * r * scale, ty = sy + dy * r * scale;
+        const label = fmt(Math.round(r));
+        ctx.font = `${Math.round(11 * dpr)}px ui-monospace, monospace`;
+        ctx.textAlign = "center";
+        const tw = ctx.measureText(label).width + 9 * dpr;
+        ctx.fillStyle = "rgba(6,12,18,.78)";
+        ctx.fillRect(tx - tw / 2, ty - 8 * dpr, tw, 16 * dpr);
+        ctx.fillStyle = "#e8f4f8";
+        ctx.fillText(label, tx, ty + 4 * dpr);
+      } else if (!selW) {
+        wedgeF(sx, sy, wa, slot.arc, r, col, 0.06, false);
+      }
+    }
+  }
+
+  // ---- velocity vector: one second of travel at the current velocity
+  if (f.speed > 0.5) {
+    const [ex, ey] = toScreen(f.x + f.vx, f.y + f.vy);
+    ctx.save();
+    ctx.strokeStyle = "rgba(87,199,227,.55)";
+    ctx.lineWidth = Math.max(1.2, dpr);
+    ctx.beginPath(); ctx.moveTo(scx, scy); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.fillStyle = "rgba(87,199,227,.85)";
+    ctx.beginPath(); ctx.arc(ex, ey, 2.4 * dpr, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  // ---- the ship, rotated to heading; fitted weapons ride along
+  ctx.save();
+  ctx.translate(scx, scy);
+  ctx.rotate(th);
+  if (S.shipImg) {
+    ctx.drawImage(S.shipImg, -sh.center[0] * scale, -(effH - sh.center[1]) * scale,
+      effW * scale, effH * scale);
+  } else {
+    // schematic silhouette around the origin, bow up (refit shape, centered)
+    const hw = (effW / 2) * scale, hh = (effH / 2) * scale;
+    ctx.save();
+    ctx.strokeStyle = "rgba(57,194,215,.35)";
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.arc(0, 0, (sh.collisionRadius || effW / 2) * scale, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(38,57,74,.55)";
+    ctx.strokeStyle = "#39c2d7";
+    ctx.beginPath();
+    ctx.moveTo(0, -hh);
+    ctx.lineTo(hw * 0.82, -hh * 0.35);
+    ctx.lineTo(hw, hh * 0.55);
+    ctx.lineTo(hw * 0.72, hh);
+    ctx.lineTo(-hw * 0.72, hh);
+    ctx.lineTo(-hw, hh * 0.55);
+    ctx.lineTo(-hw * 0.82, -hh * 0.35);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  for (const slot of sh.slots) {
+    const w = fittedWeapon(slot);
+    const lx = slot.y * scale, ly = -slot.x * scale;
+    let drew = false;
+    if (w && S.show.sprites) {
+      const img = S.weaponImgs[`${w.id}|${slot.mount === "HARDPOINT" ? "hardpoint" : "turret"}`];
+      if (img) {
+        const pw = img.naturalWidth * scale, ph = img.naturalHeight * scale;
+        ctx.save();
+        ctx.translate(lx, ly);
+        ctx.rotate(slot.angle * Math.PI / 180);
+        ctx.drawImage(img, -pw / 2, -ph / 2, pw, ph);
+        ctx.restore();
+        drew = true;
+      }
+    }
+    if (!drew && w) {
+      // fitted but no art loaded: fall back to the slot glyph so the mount
+      // still reads on the hull
+      const r = Math.max((GLYPH_R[slot.size] || 5) * scale, 2.2 * dpr);
+      drawSlotGlyph(ctx, slot, lx, ly, r,
+        TYPE_COLORS[w.mountType] || TYPE_COLORS[slot.type] || "#888",
+        { fitted: true, selected: S.selectedSlot === slot.id, hover: false, dpr });
+    }
+    if (S.show.labels) {
+      ctx.fillStyle = "rgba(220,235,242,.85)";
+      ctx.font = `${Math.round(10 * dpr)}px sans-serif`;
+      ctx.textAlign = "left";
+      ctx.fillText(slot.id, lx + 10 * dpr, ly + 3 * dpr);
+    }
+  }
+  ctx.restore();
+
+  // ---- facing tick just past the bow
+  const [fdx, fdy] = dirVec(f.facing);
+  const tickR = (sh.collisionRadius || effW / 2) * scale + 14 * dpr;
+  ctx.save();
+  ctx.strokeStyle = "rgba(240,248,252,.65)";
+  ctx.lineWidth = Math.max(1.2, dpr);
+  ctx.beginPath();
+  ctx.moveTo(scx + fdx * tickR * 0.8, scy + fdy * tickR * 0.8);
+  ctx.lineTo(scx + fdx * tickR, scy + fdy * tickR);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function wireFlight() {
+  $("flight-btn").addEventListener("click", () => {
+    if (S.flight && S.flight.active) exitFlight(); else enterFlight();
+  });
+  $("flight-reset").addEventListener("click", () => resetFlight());
+  $("fh-ranges").addEventListener("change", (e) => {
+    if (S.flight) { S.flight.showRanges = e.target.checked; draw(); }
+  });
+  document.addEventListener("keydown", (e) => {
+    const f = S.flight;
+    if (!f || !f.active) return;
+    const tag = e.target && e.target.tagName;
+    const type = e.target && e.target.type;
+    // typing in a text field still types; toggles/buttons keep flight keys
+    if (tag === "TEXTAREA" || tag === "SELECT"
+        || (tag === "INPUT" && (type === "text" || type === "search" || type === "number"))) return;
+    if (e.key === "Escape") { exitFlight(); return; }
+    if (e.code === "KeyR") { resetFlight(); return; }
+    if (FLIGHT_CODES.has(e.code)) { f.keys.add(e.code); e.preventDefault(); }
+  });
+  document.addEventListener("keyup", (e) => {
+    if (S.flight) S.flight.keys.delete(e.code);
+  });
+  window.addEventListener("blur", () => { if (S.flight) S.flight.keys.clear(); });
+  for (const b of document.querySelectorAll("#flight-touch [data-tc]")) {
+    const key = b.dataset.tc;
+    b.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      if (S.flight) S.flight.touch[key] = true;
+      try { b.setPointerCapture(e.pointerId); } catch (err) { /* non-fatal */ }
+    });
+    const off = () => { if (S.flight) S.flight.touch[key] = false; };
+    b.addEventListener("pointerup", off);
+    b.addEventListener("pointercancel", off);
+    b.addEventListener("lostpointercapture", off);
+    b.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+}
+
 // ---------------------------------------------------------------- UI wiring
 function wireUI() {
   $("ship-search").addEventListener("input", (e) => { S.shipSearch = e.target.value; buildShipList(); });
@@ -2044,12 +2454,14 @@ function wireUI() {
   // drag to pan; a click that follows a real drag must not select a slot
   let drag = null, dragged = false;
   cv.addEventListener("pointerdown", (e) => {
+    if (S.flight && S.flight.active) return;   // no pan/select while flying
     drag = { x: e.clientX, y: e.clientY, px: S.cam.px, py: S.cam.py };
     dragged = false;
     try { cv.setPointerCapture(e.pointerId); } catch (err) { /* non-fatal */ }
   });
   cv.addEventListener("pointerup", () => { drag = null; });
   cv.addEventListener("click", (e) => {
+    if (S.flight && S.flight.active) return;
     if (dragged) { dragged = false; return; }
     const [mx, my] = evtPos(e);
     const slot = slotAt(mx, my);
@@ -2071,6 +2483,7 @@ function wireUI() {
   });
   // right-click a fitted slot clears it (the game's remove, web-style)
   cv.addEventListener("contextmenu", (e) => {
+    if (S.flight && S.flight.active) return;
     const [mx, my] = evtPos(e);
     const slot = slotAt(mx, my);
     if (slot && !isLocked(slot.id) && S.build.weapons[slot.id]) {
@@ -2092,6 +2505,7 @@ function wireUI() {
     if (e.key === "Escape" && S.pickerOpen) { closePicker(); renderPicker(); }
   });
   cv.addEventListener("pointermove", (e) => {
+    if (S.flight && S.flight.active) { $("tooltip").hidden = true; return; }
     if (drag) {
       const dpr = window.devicePixelRatio || 1;
       const dx = (e.clientX - drag.x) * dpr, dy = (e.clientY - drag.y) * dpr;
@@ -2140,6 +2554,7 @@ function wireUI() {
   });
 
   wireSaveImport();
+  wireFlight();
 
   new ResizeObserver(() => resizeCanvas()).observe($("stage"));
   window.addEventListener("resize", resizeCanvas);
