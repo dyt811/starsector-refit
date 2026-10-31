@@ -724,7 +724,12 @@ def main():
                  "hitpoints", "armor", "fluxCapacity", "fluxDissipation",
                  "maxSpeed", "acceleration", "deceleration", "maxTurnRate",
                  "turnAcceleration", "shieldType", "shieldArc", "shieldEfficiency",
-                 "phaseCost", "systemId", "baseValue")
+                 "phaseCost", "systemId", "baseValue",
+                 # logistics / design type (V3): tech is the raw
+                 # 'tech/manufacturer' CSV string (Low Tech / Midline / ...)
+                 "tech", "fuelCapacity", "fuelPerLy", "maxBurn", "cargo",
+                 "minCrew", "maxCrew", "suppliesRec", "suppliesPerMonth",
+                 "crPerDay", "crToDeploy", "peakCrSec")
 
     def stats_from_row(row):
         if row is None:
@@ -750,6 +755,18 @@ def main():
             "phaseCost": fnum(row.get("phase cost")),
             "systemId": (row.get("system id") or "").strip() or None,
             "baseValue": inum(row.get("base value")),
+            "tech": (row.get("tech/manufacturer") or "").strip() or None,
+            "fuelCapacity": inum(row.get("fuel")),
+            "fuelPerLy": fnum(row.get("fuel/ly")),
+            "maxBurn": inum(row.get("max burn")),
+            "cargo": inum(row.get("cargo")),
+            "minCrew": inum(row.get("min crew")),
+            "maxCrew": inum(row.get("max crew")),
+            "suppliesRec": inum(row.get("supplies/rec")),
+            "suppliesPerMonth": inum(row.get("supplies/mo")),
+            "crPerDay": inum(row.get("cr %/day")),
+            "crToDeploy": inum(row.get("CR to deploy")),
+            "peakCrSec": inum(row.get("peak CR sec")),
         }
 
     def sprite_shard(hull_id, sprite_rel):

@@ -42,7 +42,7 @@ header#topbar {
   background: var(--bg); border: 1px solid var(--line); color: var(--text);
   padding: 6px 8px; border-radius: 3px; width: 100%;
 }
-#size-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+#size-chips, #tech-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
   background: var(--bg3); color: var(--text-dim); border: 1px solid var(--line);
   border-radius: 10px; padding: 2px 9px; cursor: pointer; font-size: 11px;
@@ -62,6 +62,21 @@ header#topbar {
   display: block; width: 100%; height: 52px; object-fit: contain;
   margin-bottom: 3px; image-rendering: auto;
 }
+
+/* design-type tints: --tc drives the badge, list line and chip accents */
+.tech-low { --tc: #dd7f3e; }
+.tech-mid { --tc: #d9c05a; }
+.tech-high { --tc: #39c2d7; }
+.tech-other { --tc: #7e93a4; }
+.tech-badge {
+  display: inline-block; vertical-align: middle; margin-left: 6px;
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: 1.5px; text-transform: uppercase; line-height: 1;
+  padding: 4px 7px; border-radius: 2px;
+  color: var(--tc, var(--text-dim)); border: 1px solid var(--tc, var(--line));
+  background: color-mix(in srgb, var(--tc, transparent) 13%, transparent);
+}
+.ship-item .tech-line { color: var(--tc, var(--text-dim)); }
 
 /* ---- stage ---- */
 #stage { flex: 1; position: relative; min-width: 0; background:
@@ -95,6 +110,29 @@ header#topbar {
 }
 .stats-grid .k { color: var(--text-dim); }
 .stats-grid .v { text-align: right; color: #eaf4f9; }
+
+/* highlighted primary stats (speed / flux capacity / flux dissipation) */
+.primary-stats {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 8px 0 10px;
+}
+.pstat {
+  background: var(--bg3); border: 1px solid var(--line); border-top: 2px solid var(--pa, var(--teal));
+  border-radius: 3px; padding: 6px 8px 7px; min-width: 0;
+}
+.pstat.a-spd { --pa: var(--amber); }
+.pstat.a-cap { --pa: var(--teal); }
+.pstat.a-diss { --pa: var(--green); }
+.pstat .pk {
+  display: block; font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pstat .pv {
+  display: block; font-family: var(--mono); font-size: 21px; font-weight: 700;
+  color: var(--pa, #eaf4f9); line-height: 1.2;
+}
+.pstat .pv .delta { font-size: 12px; font-weight: 600; }
+.delta.pos { color: var(--green); }
+.delta.neg { color: var(--red); }
 
 /* OP bar */
 .opbar {

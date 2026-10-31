@@ -51,6 +51,7 @@ const S = {
   selectedSlot: null,     // slot id string
   hoverSlot: null,
   sizeFilter: "ALL",
+  techFilter: "ALL",
   shipSearch: "",
   weaponSearch: "",
   weaponSort: "op",
@@ -70,6 +71,12 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 const fmt = (v, d = 0) => (v === null || v === undefined || Number.isNaN(v))
   ? "—" : Number(v).toLocaleString("en-US", { maximumFractionDigits: d });
 const dirVec = (deg) => { const r = deg * Math.PI / 180; return [Math.sin(r), -Math.cos(r)]; };
+// Design type ("tech/manufacturer" in the game data). `tech` is the field
+// build_data.py emits from the CSV; `manufacturer` is the legacy twin kept
+// as a fallback for older data.json files.
+const shipTech = (s) => s.tech || s.manufacturer || null;
+const techClass = (t) => (t === "Low Tech" ? "low" : t === "Midline" ? "mid"
+  : t === "High Tech" ? "high" : "other");
 
 function fetchJSON(path) {
   if (!S.shardCache[path]) {
@@ -125,6 +132,7 @@ function start(data) {
     const caps = Object.values(data.ships).filter((s) => s.hullSize === "CAPITAL_SHIP");
     initial = (caps[0] || Object.values(data.ships)[0] || {}).id;
   }
+  buildTechChips();
   buildShipList();
   if (initial) {
     selectShip(initial, restored && restored.shipId === initial ? restored.build : null);
@@ -150,21 +158,48 @@ const thumbObserver = ("IntersectionObserver" in window)
     }, { root: document.getElementById("ship-list"), rootMargin: "120px" })
   : null;
 
+// Design-type filter chips, derived from the distinct tech values actually
+// present in the data (Low Tech / Midline / High Tech pinned first, the rest
+// by fleet frequency). Composes with the size filter and the search box.
+function buildTechChips() {
+  const counts = {};
+  for (const s of Object.values(S.data.ships)) {
+    const t = shipTech(s);
+    if (t) counts[t] = (counts[t] || 0) + 1;
+  }
+  const pin = ["Low Tech", "Midline", "High Tech"];
+  const values = Object.keys(counts).sort((a, b) =>
+    (pin.indexOf(a) === -1 ? 99 : pin.indexOf(a)) - (pin.indexOf(b) === -1 ? 99 : pin.indexOf(b))
+    || counts[b] - counts[a] || a.localeCompare(b));
+  const chip = (v, label) => `<button data-tech="${esc(v)}" class="chip ${S.techFilter === v ? "active" : ""}">${esc(label)}</button>`;
+  $("tech-chips").innerHTML = chip("ALL", "All tech") + values.map((v) => chip(v, v)).join("");
+  for (const c of $("tech-chips").querySelectorAll(".chip")) {
+    c.addEventListener("click", () => {
+      S.techFilter = c.dataset.tech;
+      for (const o of $("tech-chips").querySelectorAll(".chip")) o.classList.remove("active");
+      c.classList.add("active");
+      buildShipList();
+    });
+  }
+}
+
 function buildShipList() {
   const q = S.shipSearch.trim().toLowerCase();
   const ships = Object.values(S.data.ships)
     .filter((s) => S.sizeFilter === "ALL" || s.hullSize === S.sizeFilter)
+    .filter((s) => S.techFilter === "ALL" || shipTech(s) === S.techFilter)
     .filter((s) => !q || s.name.toLowerCase().includes(q) || s.id.includes(q)
-      || (s.manufacturer || "").toLowerCase().includes(q))
+      || (shipTech(s) || "").toLowerCase().includes(q))
     .sort((a, b) => (SIZE_ORDER[a.hullSize] ?? 9) - (SIZE_ORDER[b.hullSize] ?? 9)
       || a.name.localeCompare(b.name));
-  $("ship-list").innerHTML = ships.map((s) => `
+  $("ship-list").innerHTML = ships.map((s) => { const t = shipTech(s); return `
     <div class="ship-item ${s.id === S.shipId ? "selected" : ""}" data-ship="${esc(s.id)}">
       ${s.sprite ? `<img class="ship-thumb" data-thumb="${esc(s.sprite)}" alt="" loading="lazy">` : ""}
       <span class="nm">${esc(s.name)}</span>
       <span class="sub">${esc(s.designation || (s.hullSize || "").replace("_SHIP", ""))}</span>
+      ${t ? `<span class="sub tech-line tech-${techClass(t)}">${esc(t)}</span>` : ""}
       <span class="sub mono">${esc((s.hullSize || "").replace("_SHIP", ""))} · DP ${fmt(s.dp)} · OP ${fmt(s.op)}</span>
-    </div>`).join("");
+    </div>`; }).join("");
   for (const el of $("ship-list").querySelectorAll(".ship-item")) {
     el.addEventListener("click", () => selectShip(el.dataset.ship));
   }
@@ -874,21 +909,37 @@ function renderPanel() {
     return `<span class="k">${label}</span><span class="v eff">${fmt(Math.round(eff * 10) / 10, d)} `
       + `<span class="delta ${delta > 0 ? "pos" : "neg"}">(${delta > 0 ? "+" : ""}${fmt(Math.round(delta * 10) / 10, d)})</span></span>`;
   };
+  // highlighted primary stat card: big effective value, signed delta when
+  // hullmods (or vents/caps, for the flux pair) move it off the base value
+  const primaryCard = (label, base, eff, cls) => {
+    if (base === null || base === undefined)
+      return `<div class="pstat ${cls}"><span class="pk">${label}</span><span class="pv">—</span></div>`;
+    if (eff === null || eff === undefined || Math.abs(eff - base) < 0.05)
+      return `<div class="pstat ${cls}"><span class="pk">${label}</span><span class="pv">${fmt(Math.round(base * 10) / 10)}</span></div>`;
+    const delta = eff - base;
+    return `<div class="pstat ${cls}"><span class="pk">${label}</span><span class="pv">${fmt(Math.round(eff * 10) / 10)} `
+      + `<span class="delta ${delta > 0 ? "pos" : "neg"}">${delta > 0 ? "+" : ""}${fmt(Math.round(delta * 10) / 10)}</span></span></div>`;
+  };
+  const lv = (v, suffix = "", d = 0) =>
+    (v === null || v === undefined ? "—" : fmt(v, d) + suffix);
   const pct = (n) => Math.min(100, (n / Math.max(op.budget, op.total, 1)) * 100);
   const sel = sh.slots.find((s) => s.id === S.selectedSlot) || null;
+  const tech = shipTech(sh);
 
   let html = `
-    <h2>${esc(sh.name)}</h2>
+    <h2>${esc(sh.name)}${tech ? ` <span class="tech-badge tech-${techClass(tech)}">${esc(tech)}</span>` : ""}</h2>
     <div class="ship-sub">${esc(sh.designation || "")}${sh.designation && sh.manufacturer ? " · " : ""}${esc(sh.manufacturer || "")}
       · ${esc((sh.hullSize || "").replace(/_/g, " "))}${sh.isSkin ? ` · skin of ${esc(sh.baseHullId)}` : ""}</div>
+    <div class="primary-stats">
+      ${primaryCard("Max speed", sh.maxSpeed, effShipStat("maxSpeed", agg), "a-spd")}
+      ${primaryCard("Flux capacity", sh.fluxCapacity, fx.capacity, "a-cap")}
+      ${primaryCard("Flux dissipation", sh.fluxDissipation, fx.dissipation, "a-diss")}
+    </div>
     <div class="stats-grid">
       <span class="k">Deployment pts</span><span class="v">${fmt(sh.dp)}</span>
       <span class="k">Ordnance pts</span><span class="v">${fmt(sh.op)}</span>
       <span class="k">Hitpoints</span><span class="v">${fmt(sh.hitpoints)}</span>
       ${statRow("Armor", sh.armor, effShipStat("armor", agg))}
-      ${statRow("Flux capacity", sh.fluxCapacity, fx.capacity)}
-      ${statRow("Flux dissipation", sh.fluxDissipation, fx.dissipation)}
-      ${statRow("Max speed", sh.maxSpeed, effShipStat("maxSpeed", agg))}
       ${statRow("Acceleration", sh.acceleration, effShipStat("acceleration", agg))}
       ${statRow("Deceleration", sh.deceleration, effShipStat("deceleration", agg))}
       ${statRow("Max turn rate", sh.maxTurnRate, effShipStat("maxTurnRate", agg), 1)}
@@ -898,6 +949,20 @@ function renderPanel() {
         : `<span class="k">Shield</span><span class="v">${esc(sh.shieldType || "NONE")}${sh.shieldArc ? ` ${fmt(sh.shieldArc)}°` : ""}${sh.shieldEfficiency ? ` · eff ${fmt(sh.shieldEfficiency, 2)}` : ""}</span>`}
       <span class="k">System</span><span class="v">${esc(sh.systemId || "—")}</span>
       <span class="k">Base value</span><span class="v">${fmt(sh.baseValue)} cr</span>
+    </div>
+
+    <h3>Logistics</h3>
+    <div class="stats-grid">
+      <span class="k">Fuel capacity</span><span class="v">${lv(sh.fuelCapacity)}</span>
+      <span class="k">Fuel / ly</span><span class="v">${lv(sh.fuelPerLy, "", 1)}</span>
+      ${statRow("Max burn", sh.maxBurn, effShipStat("maxBurn", agg))}
+      <span class="k">Cargo</span><span class="v">${lv(sh.cargo)}</span>
+      <span class="k">Crew</span><span class="v">${sh.minCrew === null || sh.minCrew === undefined ? "—" : `${fmt(sh.minCrew)} – ${fmt(sh.maxCrew)}`}</span>
+      <span class="k">Upkeep</span><span class="v">${lv(sh.suppliesPerMonth, "/mo")}</span>
+      <span class="k">Supplies to recover</span><span class="v">${lv(sh.suppliesRec)}</span>
+      <span class="k">CR to deploy</span><span class="v">${lv(sh.crToDeploy, "%")}</span>
+      <span class="k">CR per day</span><span class="v">${lv(sh.crPerDay, "%")}</span>
+      <span class="k">Peak CR time</span><span class="v">${lv(sh.peakCrSec, " s")}</span>
     </div>
 
     <h3>Ordnance Points</h3>
