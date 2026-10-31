@@ -137,6 +137,456 @@ def read_csv_by_id(path: Path):
             rows[rid] = row
     return rows, dupes
 
+# ------------------------------------------------- hullmod effects (Java)
+#
+# Hullmod scripts that ship as source live in data/hullmods/*.java (scripts in
+# com.fs.starfarer.api.impl.hullmods.* live in the game jar and are NOT in this
+# pull). We statically extract the MutableShipStatsAPI modifiers the viewer
+# models: weapon range (per class: ballistic/energy/missile/beam + the PD-only
+# bonuses + Safety Overrides' range threshold), flux capacity/dissipation,
+# armor, and the maneuvering stats.
+#
+# A modifier value is a number, or {"bySize": {FRIGATE: n, ...}} when the
+# script keys it by HullSize (the ITU/DTC "mag" maps). s-mod branches are
+# stripped (the viewer does not model s-mods), and anything the parser cannot
+# resolve statically (e.g. D-mod severity scaling in CompromisedArmor) is
+# skipped with a warning.
+
+HULLMOD_GETTERS = {
+    "getBallisticWeaponRangeBonus": ("range", "ballistic"),
+    "getEnergyWeaponRangeBonus": ("range", "energy"),
+    "getMissileWeaponRangeBonus": ("range", "missile"),
+    "getBeamWeaponRangeBonus": ("range", "beam"),
+    "getNonBeamPDWeaponRangeBonus": ("range", "pdNonBeam"),
+    "getBeamPDWeaponRangeBonus": ("range", "pdBeam"),
+    "getWeaponRangeThreshold": ("range", "threshold"),
+    "getWeaponRangeMultPastThreshold": ("range", "multPastThreshold"),
+    "getFluxCapacity": ("fluxCapacity", None),
+    "getFluxDissipation": ("fluxDissipation", None),
+    "getArmorBonus": ("armor", None),
+    "getMaxSpeed": ("maxSpeed", None),
+    "getAcceleration": ("acceleration", None),
+    "getDeceleration": ("deceleration", None),
+    "getMaxTurnRate": ("maxTurnRate", None),
+    "getTurnAcceleration": ("turnAcceleration", None),
+}
+HULL_SIZES = ("FIGHTER", "FRIGATE", "DESTROYER", "CRUISER", "CAPITAL_SHIP")
+
+
+def strip_java_comments(src):
+    out, i, n, state = [], 0, len(src), None
+    while i < n:
+        c = src[i]
+        if state:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(src[i + 1]); i += 2; continue
+            if c == state:
+                state = None
+            i += 1
+        elif c in "\"'":
+            state = c; out.append(c); i += 1
+        elif c == "/" and i + 1 < n and src[i + 1] == "/":
+            while i < n and src[i] != "\n":
+                i += 1
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (src[i] == "*" and src[i + 1] == "/"):
+                i += 1
+            i += 2
+        else:
+            out.append(c); i += 1
+    return "".join(out)
+
+
+def eval_num_expr(expr, consts):
+    """Evaluate a Java float expression over known constants, safely."""
+    # strip Java numeric suffixes FIRST (else "0f" parses 'f' as an identifier)
+    e = re.sub(r"(\d+(?:\.\d+)?)[fFlL]\b", r"\1", expr)
+    def repl(m):
+        name = m.group(0)
+        if name in consts:
+            return repr(consts[name])
+        raise KeyError(name)
+    try:
+        e = re.sub(r"[A-Za-z_]\w*", repl, e)
+    except KeyError:
+        return None
+    if not re.fullmatch(r"[0-9\.\s\+\-\*/\(\)]+", e):
+        return None
+    try:
+        return float(eval(e, {"__builtins__": {}}, {}))  # noqa: S307 - sanitized above
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def paren_span(s, open_idx):
+    """(inner_text, index_after_close) for the '(' at open_idx."""
+    depth, j = 0, open_idx
+    while j < len(s):
+        if s[j] == "(":
+            depth += 1
+        elif s[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return s[open_idx + 1:j], j + 1
+        j += 1
+    return s[open_idx + 1:], len(s)
+
+
+def method_body(src, name):
+    """Body of the method declaration `name` (any return type; skips call sites)."""
+    for m in re.finditer(r"\b" + re.escape(name) + r"\s*\(", src):
+        _, after = paren_span(src, m.end() - 1)
+        k = after
+        while k < len(src) and src[k] in " \t\r\n":
+            k += 1
+        if k >= len(src) or src[k] != "{":
+            continue  # a call site, not the declaration
+        depth, j = 0, k
+        while j < len(src):
+            if src[j] == "{":
+                depth += 1
+            elif src[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    return src[k + 1:j]
+            j += 1
+    return None
+
+
+def _branch_span(body, pos):
+    """Span (content_start, content_end, total_end) of a then/else branch at pos."""
+    i = pos
+    while i < len(body) and body[i] in " \t\r\n":
+        i += 1
+    if i < len(body) and body[i] == "{":
+        depth, j = 0, i
+        while j < len(body):
+            if body[j] == "{":
+                depth += 1
+            elif body[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    return i + 1, j, j + 1
+            j += 1
+        return i + 1, len(body), len(body)
+    semi = body.index(";", i)
+    return i, semi + 1, semi + 1
+
+
+def remove_smod_branches(body):
+    """Drop `if (sMod) ...` code (viewer does not model s-mods); keep `!sMod`."""
+    while True:
+        m = re.search(r"if\s*\(\s*(!?)\s*(?:sMod\b|isSMod\s*\()", body)
+        if not m:
+            return body
+        negated = m.group(1) == "!"
+        _, cond_end = paren_span(body, body.index("(", m.start()))
+        cs, ce, te = _branch_span(body, cond_end)
+        k = te
+        while k < len(body) and body[k] in " \t\r\n":
+            k += 1
+        else_span = None
+        if body.startswith("else", k) and (k + 4 >= len(body)
+                                           or not (body[k + 4].isalnum() or body[k + 4] == "_")):
+            else_span = _branch_span(body, k + 4)
+        if not negated:
+            if else_span:
+                body = body[:m.start()] + body[else_span[0]:else_span[1]] + body[else_span[2]:]
+            else:
+                body = body[:m.start()] + body[te:]
+        else:
+            tail = body[else_span[2]:] if else_span else body[te:]
+            body = body[:m.start()] + body[cs:ce] + tail
+
+
+def split_top_commas(s):
+    parts, depth, cur = [], 0, []
+    for c in s:
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        if c == "," and depth == 0:
+            parts.append("".join(cur)); cur = []
+        else:
+            cur.append(c)
+    parts.append("".join(cur))
+    return parts
+
+
+def split_ternary(expr):
+    depth, q = 0, -1
+    for i, c in enumerate(expr):
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == "?" and depth == 0:
+            q = i; break
+    if q < 0:
+        return None
+    depth, nest = 0, 0
+    for j in range(q + 1, len(expr)):
+        c = expr[j]
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == "?" and depth == 0:
+            nest += 1
+        elif c == ":" and depth == 0:
+            if nest == 0:
+                return expr[:q], expr[q + 1:j], expr[j + 1:]
+            nest -= 1
+    return None
+
+
+class JavaHullmod:
+    """One data/hullmods/*.java source: constants, HullSize maps, effects."""
+
+    def __init__(self, path):
+        self.name = path.stem
+        self.src = strip_java_comments(path.read_text(encoding="utf-8", errors="replace"))
+        self.consts = {}
+        self.maps = {}
+        pat = re.compile(r"static\s+(?:final\s+)?(?:float|int|double)\s+(\w+)\s*=\s*([^;]+);")
+        for _ in range(5):
+            progressed = False
+            for m in pat.finditer(self.src):
+                if m.group(1) in self.consts:
+                    continue
+                v = eval_num_expr(m.group(2), self.consts)
+                if v is not None:
+                    self.consts[m.group(1)] = v
+                    progressed = True
+            if not progressed:
+                break
+        for m in re.finditer(r"(\w+)\.put\(\s*HullSize\.(\w+)\s*,\s*([^)]+)\)", self.src):
+            v = eval_num_expr(m.group(3), self.consts)
+            if v is not None:
+                self.maps.setdefault(m.group(1), {})[m.group(2)] = v
+
+
+def resolve_value(expr, jcls, locals_, map_alias, registry):
+    """Resolve a modify*(id, EXPR) argument to a number or {"bySize": {...}}."""
+    expr = re.sub(r"\(\s*(?:float|int|double|Float|Integer)\s*\)", "", expr).strip()
+    expr = re.sub(r"(\d+(?:\.\d+)?)[fFlL]\b", r"\1", expr)  # numeric suffixes
+    if "sMod" in expr:
+        t = split_ternary(expr)
+        if t:
+            cond, a, b = t
+            expr = (a if "!" in cond else b).strip()
+    m = re.fullmatch(
+        r"(?:\(\s*Float\s*\)\s*)?(?:(\w+)\.)?(\w+)\.get\(\s*hullSize\s*\)"
+        r"\s*(?:([*/])\s*(.+))?", expr)
+    if m:
+        cls, var, op, factor = m.groups()
+        mp = None
+        if cls:
+            jc = registry.get(cls)
+            mp = jc.maps.get(var) if jc else None
+        elif var in map_alias:
+            mp = map_alias[var]
+        else:
+            mp = jcls.maps.get(var)
+        if mp is None:
+            return None
+        if op:
+            f = eval_num_expr(factor, jcls.consts)
+            if f is None:
+                return None
+            return {"bySize": {k: (v * f if op == "*" else v / f) for k, v in mp.items()}}
+        return {"bySize": dict(mp)}
+    if re.fullmatch(r"[A-Za-z_]\w*", expr):
+        if expr in jcls.consts:
+            return jcls.consts[expr]
+        return locals_.get(expr)
+    def sub(mo):
+        name = mo.group(0)
+        if name in jcls.consts:
+            return repr(jcls.consts[name])
+        v = locals_.get(name)
+        if isinstance(v, (int, float)):
+            return repr(v)
+        raise KeyError(name)
+    try:
+        e = re.sub(r"[A-Za-z_]\w*", sub, expr)
+    except KeyError:
+        return None
+    return eval_num_expr(e, {})
+
+
+def combine_specs(a, b, kind):
+    if a is None:
+        return b
+    if isinstance(a, dict) or isinstance(b, dict):
+        da = a["bySize"] if isinstance(a, dict) else {s: a for s in HULL_SIZES}
+        db = b["bySize"] if isinstance(b, dict) else {s: b for s in HULL_SIZES}
+        out = {}
+        for s in HULL_SIZES:
+            va, vb = da.get(s), db.get(s)
+            if kind == "mult":
+                out[s] = (1 if va is None else va) * (1 if vb is None else vb)
+            else:
+                out[s] = (0 if va is None else va) + (0 if vb is None else vb)
+        return {"bySize": out}
+    return a * b if kind == "mult" else a + b
+
+
+def clean_spec(spec):
+    """Collapse uniform bySize maps to a scalar; round float noise away."""
+    if isinstance(spec, dict):
+        vals = spec["bySize"]
+        if len(set(vals.values())) == 1 and len(vals) == len(HULL_SIZES):
+            return round(float(next(iter(vals.values()))), 4)
+        return {"bySize": {k: round(float(v), 4) for k, v in vals.items()}}
+    return round(float(spec), 4)
+
+
+def parse_hullmod_effects(jcls, registry):
+    effects, notes = {}, []
+    bodies = []
+    for name in ("applyEffectsBeforeShipCreation", "applyEffectsAfterShipCreation"):
+        b = method_body(jcls.src, name)
+        if b:
+            bodies.append(remove_smod_branches(b))
+    for body in bodies:
+        map_alias, locals_ = {}, {}
+        for m in re.finditer(r"\bMap\s+(\w+)\s*=\s*(?:(\w+)\.)?(\w+)\s*;", body):
+            var, cls, target = m.groups()
+            jc = registry.get(cls) if cls else None
+            mp = (jc.maps.get(target) if jc else
+                  jcls.maps.get(target) if not cls else None)
+            if mp is not None:
+                map_alias[var] = mp
+        for m in re.finditer(r"\bfloat\s+(\w+)\s*=\s*([^;]+);", body):
+            locals_[m.group(1)] = resolve_value(m.group(2), jcls, locals_, map_alias, registry)
+        call_re = re.compile(r"stats\s*\.\s*(get\w+)\s*\(\s*\)\s*\.\s*modify(Percent|Flat|Mult)\s*\(")
+        for m in call_re.finditer(body):
+            getter, kind = m.group(1), m.group(2)
+            if getter not in HULLMOD_GETTERS:
+                continue
+            args_text, _ = paren_span(body, m.end() - 1)
+            args = split_top_commas(args_text)
+            if len(args) < 2:
+                continue
+            spec = resolve_value(args[1], jcls, locals_, map_alias, registry)
+            if spec is None:
+                notes.append(f"{jcls.name}: unresolved {getter}.modify{kind}"
+                             f"({args[1].strip()[:48]})")
+                continue
+            key, group = HULLMOD_GETTERS[getter]
+            target = effects.setdefault("range", {}).setdefault(group, {}) if group \
+                else effects.setdefault(key, {})
+            kind = kind.lower()
+            target[kind] = combine_specs(target.get(kind), spec, kind)
+    # prune neutral modifiers (flat 0 / percent 0 / mult 1) and empty stats
+    def prune(stat):
+        out = {}
+        for kind, spec in stat.items():
+            spec = clean_spec(spec)
+            if kind in ("flat", "percent") and spec == 0:
+                continue
+            if kind == "mult" and spec == 1:
+                continue
+            out[kind] = spec
+        return out
+    cleaned = {}
+    for key, val in effects.items():
+        if key == "range":
+            groups = {g: prune(s) for g, s in val.items()}
+            groups = {g: s for g, s in groups.items() if s}
+            if groups:
+                cleaned["range"] = groups
+        else:
+            p = prune(val)
+            if p:
+                cleaned[key] = p
+    return cleaned, notes
+
+
+def parse_hullmod_applicability(jcls, known_ids):
+    """incompatibleWith / onlySizes / blockedSizes from isApplicableToShip."""
+    body = method_body(jcls.src, "isApplicableToShip")
+    if not body:
+        return {"incompatibleWith": [], "onlySizes": None, "blockedSizes": []}
+    incompat = set()
+    ref_re = re.compile(
+        r"(?:getHullMods\(\)\s*\.\s*contains|hasHullMod)"
+        r"\(\s*(?:\"([^\"]+)\"|HullMods\.(\w+))\s*\)")
+
+    def hid_of(m):
+        if m.group(1):
+            return m.group(1)
+        cand = (m.group(2) or "").lower()
+        if cand in known_ids:
+            return cand
+        # HullMods constants are not always the id verbatim (FLUX_SHUNT -> fluxshunt)
+        squashed = cand.replace("_", "")
+        for kid in known_ids:
+            if kid.replace("_", "") == squashed:
+                return kid
+        return cand
+
+    def negated_before(text, start):
+        # walk back over the dotted receiver chain: "!ship.getVariant().<ref>"
+        i = start - 1
+        while i >= 0 and (text[i].isalnum() or text[i] in "._$() \t\r\n"):
+            i -= 1
+        return i >= 0 and text[i] == "!"
+
+    # return expressions: a negated reference (!contains(X)) excludes X
+    for m in re.finditer(r"\breturn\b", body):
+        semi = body.find(";", m.end())
+        seg = body[m.end():semi if semi > 0 else len(body)]
+        for m2 in ref_re.finditer(seg):
+            if negated_before(seg, m2.start()):
+                hid = hid_of(m2)
+                if hid in known_ids:
+                    incompat.add(hid)
+    # `if (...) return false` guards: positive references exclude; == sizes block
+    blocked = set()
+    for m in re.finditer(r"if\s*\(", body):
+        cond, after_idx = paren_span(body, m.end() - 1)
+        after = body[after_idx:after_idx + 40]
+        if re.match(r"\s*\{?\s*return\s+false", after):
+            for s in re.findall(r"getHullSize\(\)\s*==\s*HullSize\.(\w+)", cond):
+                blocked.add(s)
+            for m2 in ref_re.finditer(cond):
+                if not negated_before(cond, m2.start()):
+                    hid = hid_of(m2)
+                    if hid in known_ids:
+                        incompat.add(hid)
+    eq = set(re.findall(r"getHullSize\(\)\s*==\s*HullSize\.(\w+)", body))
+    only = sorted(eq - blocked) or None
+    return {"incompatibleWith": sorted(incompat), "onlySizes": only,
+            "blockedSizes": sorted(blocked)}
+
+
+# Hand-encoded special cases. These hullmods' scripts ship in the game jar
+# (com.fs.starfarer.api.impl.hullmods.*), not in this data pull, so they can
+# not be parsed above. Their mechanics below are transcribed from the in-game
+# tooltips (cross-checked against the hullmod documentation):
+# - Ballistic Rangefinder: per-weapon BASE range bonus for non-PD weapons in
+#   BALLISTIC slots (applied before percent/mult bonuses; other bonuses then
+#   apply to the raised base). If the ship has a large ballistic slot: small
+#   slots +200, medium +100, result capped at 900. Otherwise small +100,
+#   capped at 800. Destroyers and up only.
+# - High Scatter Amplifier: beam weapons with base range over 200 have their
+#   base range set to 200 + (range - 200) * 0.5 before other bonuses.
+HULLMOD_SPECIALS = {
+    "ballistic_rangefinder": {
+        "special": "ballistic_rangefinder",
+        "onlySizes": ["DESTROYER", "CRUISER", "CAPITAL_SHIP"],
+    },
+    "high_scatter_amp": {
+        "special": "high_scatter_amp",
+        "incompatibleWith": ["advancedoptics"],
+    },
+}
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -145,6 +595,22 @@ def main():
         (OUT / "sprites" / sub).mkdir(parents=True, exist_ok=True)
     ship_rows, ship_dupes = read_csv_by_id(SRC / "data/hulls/ship_data.csv")
     weap_rows, weap_dupes = read_csv_by_id(SRC / "data/weapons/weapon_data.csv")
+
+    # ---- weapon descriptions: data/strings/descriptions.csv (optional) -------
+    # Schema: id,type,text1..text5,notes. WEAPON rows carry the description in
+    # text1 (later text columns are rare continuations). Absent file -> no desc.
+    descriptions = {}
+    desc_path = SRC / "data/strings/descriptions.csv"
+    if desc_path.exists():
+        with desc_path.open(newline="", encoding="utf-8", errors="replace") as fh:
+            for row in csv.DictReader(fh):
+                rid = (row.get("id") or "").strip()
+                if not rid or (row.get("type") or "").strip() != "WEAPON":
+                    continue
+                txt = "\n\n".join(
+                    t for t in ((row.get(f"text{i}") or "").strip() for i in range(1, 6)) if t)
+                if txt:
+                    descriptions[rid] = txt
     if ship_dupes:
         warnings.append(f"ship_data.csv duplicate ids (kept first): {ship_dupes}")
     if weap_dupes:
@@ -160,6 +626,22 @@ def main():
             continue
         if d.get("id"):
             wpn_files[d["id"]] = d
+
+    def weapon_extra(wid, row):
+        """Spec-card fields beyond the core stats (row = weapon_data.csv row)."""
+        hints = [h.strip() for h in (row.get("hints") or "").split(",")] if row else []
+        return {
+            "ammo": inum(row.get("ammo")) if row else None,
+            "burstSize": inum(row.get("burst size")) if row else None,
+            "burstDelay": fnum(row.get("burst delay")) if row else None,
+            "projSpeed": inum(row.get("proj speed")) if row else None,
+            # beams are the rows with a beam speed; PD bonuses key off the hints
+            "beam": bool(row and fnum(row.get("beam speed"))),
+            "pd": any(h in ("PD", "PD_ONLY") for h in hints),
+            "role": ((row.get("primaryRoleStr") or "").strip() or None) if row else None,
+            "turnRate": fnum(row.get("turn rate")) if row else None,
+            "desc": descriptions.get(wid),
+        }
 
     weapons = {}
     for wid, row in weap_rows.items():
@@ -177,6 +659,7 @@ def main():
             "damageType": (row.get("type") or "").strip() or None,
             "fluxPerShot": fnum(row.get("energy/shot")),
             "fluxPerSecond": fnum(row.get("energy/second")),
+            **weapon_extra(wid, row),
             # shard keys; app fetches sprites/weapons/<id>.json on demand, 404-tolerant
             "turretSprite": f"weapons/{wid}",
             "hardpointSprite": f"weapons/{wid}",
@@ -189,6 +672,7 @@ def main():
             "op": 0, "range": None, "damagePerShot": None, "damagePerSecond": None,
             "empDamage": None, "damageType": None, "fluxPerShot": None,
             "fluxPerSecond": None,
+            **weapon_extra(wid, None),
             "turretSprite": f"weapons/{wid}", "hardpointSprite": f"weapons/{wid}",
         }
     if wpn_only:
@@ -238,7 +722,8 @@ def main():
 
     STAT_KEYS = ("designation", "manufacturer", "dp", "op", "fighterBays",
                  "hitpoints", "armor", "fluxCapacity", "fluxDissipation",
-                 "maxSpeed", "shieldType", "shieldArc", "shieldEfficiency",
+                 "maxSpeed", "acceleration", "deceleration", "maxTurnRate",
+                 "turnAcceleration", "shieldType", "shieldArc", "shieldEfficiency",
                  "phaseCost", "systemId", "baseValue")
 
     def stats_from_row(row):
@@ -255,6 +740,10 @@ def main():
             "fluxCapacity": inum(row.get("max flux")),
             "fluxDissipation": inum(row.get("flux dissipation")),
             "maxSpeed": inum(row.get("max speed")),
+            "acceleration": inum(row.get("acceleration")),
+            "deceleration": inum(row.get("deceleration")),
+            "maxTurnRate": inum(row.get("max turn rate")),
+            "turnAcceleration": inum(row.get("turn acceleration")),
             "shieldType": (row.get("shield type") or "").strip() or None,
             "shieldArc": inum(row.get("shield arc")),
             "shieldEfficiency": fnum(row.get("shield efficiency")),
@@ -412,6 +901,48 @@ def main():
             "icon": icon,
         }
 
+    # ---- hullmod effects + applicability from the local .java sources --------
+    java_mods = {}
+    for f in sorted((SRC / "data/hullmods").glob("*.java")):
+        java_mods[f.stem] = JavaHullmod(f)
+    for mid, entry in hullmods.items():
+        script = (hm_rows[mid].get("script") or "").strip()
+        if not script.startswith("data.hullmods."):
+            continue  # jar script (com.fs.starfarer.api.impl.hullmods.*): no source
+        jcls = java_mods.get(script.rsplit(".", 1)[-1])
+        if jcls is None:
+            warnings.append(f"hullmod {mid}: script {script} but no local .java source")
+            continue
+        effects, notes = parse_hullmod_effects(jcls, java_mods)
+        warnings.extend(notes)
+        if effects:
+            entry["effects"] = effects
+        appl = parse_hullmod_applicability(jcls, set(hullmods))
+        if appl["incompatibleWith"]:
+            entry["incompatibleWith"] = appl["incompatibleWith"]
+        if appl["onlySizes"]:
+            entry["onlySizes"] = appl["onlySizes"]
+        if appl["blockedSizes"]:
+            entry["blockedSizes"] = appl["blockedSizes"]
+    # hand-encoded specials for jar-only scripts (see HULLMOD_SPECIALS)
+    for mid, spec in HULLMOD_SPECIALS.items():
+        if mid not in hullmods:
+            continue
+        for k, v in spec.items():
+            if k == "incompatibleWith":
+                inc = set(hullmods[mid].get("incompatibleWith") or []) | set(v)
+                hullmods[mid]["incompatibleWith"] = sorted(inc)
+            else:
+                hullmods[mid][k] = v
+    # incompatibilities are symmetric in the game's UI
+    for mid, entry in hullmods.items():
+        for other in list(entry.get("incompatibleWith") or []):
+            if other in hullmods:
+                lst = hullmods[other].setdefault("incompatibleWith", [])
+                if mid not in lst:
+                    lst.append(mid)
+                    hullmods[other]["incompatibleWith"] = sorted(lst)
+
     # ---- wings: data/hulls/wing_data.csv ---------------------------------------
     wing_rows, wing_dupes = read_csv_by_id(SRC / "data/hulls/wing_data.csv")
     if wing_dupes:
@@ -448,7 +979,19 @@ def main():
     with_sprites = [h for h, s in ships.items() if s["sprite"]]
     print(f"ships: {len(ships)} (base hulls {len(ship_defs)}, skins {skin_count})")
     print(f"weapons: {len(weapons)}")
+    print(f"weapon descriptions from descriptions.csv: "
+          f"{sum(1 for w in weapons.values() if w.get('desc'))} "
+          f"({'present' if desc_path.exists() else 'ABSENT'})")
     print(f"hullmods: {len(hullmods)} (icon shards {hm_shards})")
+    eff_ids = sorted(m for m, e in hullmods.items() if e.get("effects"))
+    print(f"hullmods with parsed effects: {len(eff_ids)} -> {eff_ids}")
+    for check in ("targetingunit", "dedicated_targeting_core", "advancedcore",
+                  "advancedoptics", "eccm", "unstable_injector", "safetyoverrides",
+                  "ballistic_rangefinder", "high_scatter_amp"):
+        e = hullmods.get(check) or {}
+        print(f"  check {check}: effects={e.get('effects')} "
+              f"incompatible={e.get('incompatibleWith')} onlySizes={e.get('onlySizes')} "
+              f"blocked={e.get('blockedSizes')} special={e.get('special')}")
     print(f"wings: {len(wings)}")
     print(f"ships with local sprites: {len(with_sprites)} -> {sorted(with_sprites)}")
     print(f"weapon sprite shards written: {weap_shards}")

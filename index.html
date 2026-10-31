@@ -11,7 +11,13 @@
   <div class="brand">STARSECTOR <span>REFIT VIEWER</span></div>
   <div class="topmeta">
     <span id="data-version"></span>
-    <label class="tgl"><input type="checkbox" id="tgl-arcs" checked> Arcs</label>
+    <label class="tgl">Ranges
+      <select id="ranges-mode">
+        <option value="selected" selected>Selected</option>
+        <option value="all">All fitted</option>
+        <option value="off">Off</option>
+      </select>
+    </label>
     <label class="tgl"><input type="checkbox" id="tgl-sprites" checked> Sprites</label>
     <label class="tgl"><input type="checkbox" id="tgl-labels"> Labels</label>
   </div>
@@ -34,7 +40,13 @@
   <main id="stage">
     <canvas id="canvas"></canvas>
     <div id="tooltip" hidden></div>
-    <div id="stage-hint">Click a slot to fit a weapon. Scroll-free, everything is local.</div>
+    <div id="zoomctl">
+      <button id="zoom-out" title="Zoom out">−</button>
+      <button id="zoom-in" title="Zoom in">+</button>
+      <button id="zoom-fit" title="Fit the whole ship">Fit ship</button>
+      <button id="zoom-range" title="Zoom out to frame the longest weapon range">Fit range</button>
+    </div>
+    <div id="stage-hint">Click a slot to fit a weapon · mouse wheel zooms · drag pans. Everything is local.</div>
   </main>
 
   <aside id="panel">

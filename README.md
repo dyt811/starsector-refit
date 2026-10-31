@@ -3,7 +3,9 @@
 A static, dependency-free web app that recreates the core of Starsector's refit
 screen in the browser: pick any vanilla hull, see its weapon slots and firing
 arcs over the ship sprite (or a schematic), fit weapons under the game's
-legality rules, and watch ordnance points and flux update live. Builds can be
+legality rules, and watch ordnance points and flux update live. Installed
+hullmods change the ship's effective stats and every weapon's effective range
+live, exactly as parsed from the game's own hullmod scripts. Builds can be
 saved in the browser and exported as real game `.variant` files — or import an
 existing `.variant` to inspect it.
 
@@ -56,6 +58,15 @@ picture — the ship is drawn as a schematic and the weapon as a colored marker.
 - `data/hullmods/hull_mods.csv` — hullmods: per-hull-size OP costs
   (`cost_frigate`/`cost_dest`/`cost_cruiser`/`cost_capital`), `desc`/`short`
   texts, `hidden`/`hiddenEverywhere` flags, tags, and the icon `sprite` path.
+- `data/hullmods/*.java` — the hullmod **scripts that ship as source**.
+  `build_data.py` statically parses their `MutableShipStatsAPI` calls into a
+  per-hullmod `effects` table in `data.json` (see “Hullmod effects” below),
+  and parses `isApplicableToShip` for mutual exclusions and hull-size limits.
+  Scripts that live in the game jar (`com.fs.starfarer.api.impl.hullmods.*`)
+  have no local source and are not parsed.
+- `data/strings/descriptions.csv` — weapon description text (`WEAPON` rows,
+  `text1`) and, via `weapon_data.csv`'s `primaryRoleStr`, each weapon's role
+  string; both are shown on the weapon spec cards.
 - `data/hulls/wing_data.csv` — fighter wings (`id`, `variant`, `op cost`,
   `num`, `tier`, `rarity`, role). The CSV has no display-name column; wing
   names in the viewer are derived from the wing id
@@ -127,6 +138,77 @@ collision radius shown as a dashed circle.
   Import accepts game `.variant` files (all weapon groups are flattened) and
   this app's own exports.
 
+## Visual design reference
+
+The stage and pickers follow the game's real refit screen (checked against a
+screenshot of the vanilla UI, not committed here):
+
+- Fitted weapons are drawn **at native sprite scale** (1 sprite pixel = 1
+  world unit — ship and weapon sprites share the game's pixel scale), rotated
+  to the slot facing, with a thin square outline around each fitted weapon.
+- Empty slots use the game's vocabulary of shapes: a **ring with a center
+  dot** for turrets, a **directional wedge/trapezoid** for hardpoints, a
+  **rounded rectangle** for launch bays — colored by slot type and stepping
+  with slot size (S/M/L). The stage sits on a subtle blueprint grid.
+- Ship and weapon pickers present game-style information: sprite thumbnails
+  on ship rows; weapon spec cards with the weapon's art (turret or hardpoint
+  art for the selected slot's mount), size/type pips, OP, and a two-column
+  stat grid (range, damage, damage type, EMP, flux, ammo, burst, projectile
+  speed) plus the weapon's description text where the game provides one.
+- The stats panel uses the game's label-above-value arrangement; hullmods sit
+  in a right-hand list with icon, name, and OP cost, built-ins greyed at top.
+- The stage camera zooms (mouse wheel, 0.08×–5×) and pans (drag), with
+  “Fit ship” and “Fit range” buttons; ranges can be drawn for the selected
+  slot only or for all fitted weapons.
+
+## Hullmod effects
+
+For every hullmod whose script ships as Java source, `build_data.py` extracts
+the stat modifiers the viewer models and emits them as
+`hullmods[id].effects`: weapon range split by class (`ballistic`, `energy`,
+`missile`, `beam`, plus the PD-only bonuses and Safety Overrides' range
+threshold), `fluxCapacity`, `fluxDissipation`, `armor`, and the maneuvering
+stats (`maxSpeed`, `acceleration`, `deceleration`, `maxTurnRate`,
+`turnAcceleration`). Each modifier is `flat` / `percent` / `mult`, either a
+number or keyed by hull size (the targeting units' `mag` maps). Values are
+hand-verified against the sources for the range-critical mods (Integrated
+Targeting Unit 10/20/40/60%, Dedicated Targeting Core 35/50%, Advanced
+Targeting Core +100% with −40% PD range, Advanced Optics +200 beam range,
+ECCM ×0.8 missile range, Unstable Injector ×0.85, Safety Overrides' 450
+threshold at ×0.25).
+
+The viewer composes a stat the way the game's stats API does —
+`(base + Σflat) × (1 + Σpercent/100) × Πmult` — summing the flat/percent/mult
+components of every applicable bonus group (mount class, then beam, then PD)
+into one application, applies Safety Overrides' threshold last, and shows the
+result as **base → effective** in the stats panel and as each weapon's
+effective range in its spec card and on the stage. Applicability rules come
+from the same sources: mutual exclusions (ITU / DTC / Advanced Targeting Core
+/ Distributed Fire Control, Advanced Optics / High Scatter Amplifier, Safety
+Overrides / Civilian-grade Hull + Flux Shunt, …) disable the conflicting
+checkbox with the reason shown, and hull-size limits (DTC is cruiser/capital
+only; Safety Overrides is not installable on capitals) do the same.
+
+Two jar-only mods are hand-encoded from their in-game tooltips:
+
+- **Ballistic Rangefinder** — raises the *base* range of non-PD weapons in
+  ballistic slots before percent/mult bonuses: with a large ballistic slot on
+  the hull, small slots +200 and medium +100, result capped at 900; otherwise
+  small slots +100, capped at 800. (One tooltip nuance is *not* implemented:
+  the flavor text suggests hybrid-type weapons interact with the bonus
+  differently; the viewer applies the plain rule to all ballistic-slot
+  weapons.)
+- **High Scatter Amplifier** — beam weapons' base range above 200 is first
+  compressed to `200 + (range − 200) × 0.5`.
+
+Not modeled: s-mod (“built-in”) effect branches — the parser strips them, so
+every effect is the base hullmod's; D-mods whose effect scales with damage
+severity (`CompromisedArmor`, `DegradedEngines`, `FaultyPowerGrid`) are
+skipped by the parser because their magnitude is not a static constant; and
+effects outside the modeled set (burn level, sensor profile, CR, EW, etc.)
+are ignored. Hullmods whose scripts ship only in the game jar have no parsed
+effects beyond the two hand-encoded specials above.
+
 ## Privacy
 
 Everything is client-side. Builds live in `localStorage`
@@ -146,8 +228,9 @@ Everything is client-side. Builds live in `localStorage`
   such variant file exists on disk. The wing itself is kept and fully usable
   in the viewer; only its variant definition (which the viewer doesn't use)
   is missing.
-- Hullmod *effects* are not simulated: the picker handles visibility, OP
-  costs and export. The stats panel always shows the hull's base stats.
+- Hullmod *effects* are simulated for the stats listed under “Hullmod
+  effects” above; other effects (and s-mod branches) are not — see that
+  section for the exact boundaries.
 - One weapon group per exported variant (LINKED); per-group autofire modes
   from imported variants are flattened on import.
 - The vanilla `heron.ship` data itself contains two slots with the same id
