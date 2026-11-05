@@ -1216,6 +1216,7 @@ function renderBuildBar(saved) {
     <span class="note">Builds are stored only in this browser.</span>
     <button data-action="export">Export .variant</button>
     <button data-action="copy">Copy variant</button>
+    <button data-action="export-battle">Export for Spawn battle</button>
     <button data-action="import">Import .variant</button>`;
 }
 
@@ -1340,6 +1341,7 @@ function wirePanel(saved) {
   const act = (name) => bar.querySelector(`[data-action='${name}']`);
   if (act("save-build")) act("save-build").addEventListener("click", saveBuild);
   if (act("export")) act("export").addEventListener("click", exportVariant);
+  if (act("export-battle")) act("export-battle").addEventListener("click", exportBattleVariant);
   if (act("copy")) act("copy").addEventListener("click", copyVariant);
   if (act("import")) act("import").addEventListener("click", () => $("import-picker").click());
   wirePicker();
@@ -1402,6 +1404,20 @@ function download(name, text) {
 function exportVariant() {
   const safe = (S.build.name || ship().name).replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_");
   download(`${S.shipId}_${safe || "build"}.variant`, JSON.stringify(toVariant(), null, 2));
+}
+function exportBattleVariant() {
+  // The Spawn battle sim's variant format (scripts/refit.js in the world
+  // repo): a flat build the sim validates and derives stats from.
+  // Re-imports here unchanged through Import .variant.
+  const v = {
+    hullId: S.shipId, name: S.build.name || "",
+    weapons: { ...S.build.weapons },
+    vents: S.build.vents || 0, caps: S.build.caps || 0,
+    hullMods: [...(S.build.hullMods || [])], smods: [...(S.build.smods || [])],
+    wings: [...(S.build.wings || [])],
+  };
+  const safe = (S.build.name || ship().name).replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_");
+  download(`${S.shipId}_${safe || "build"}.battle-variant.json`, JSON.stringify(v, null, 2));
 }
 async function copyVariant() {
   try { await navigator.clipboard.writeText(JSON.stringify(toVariant(), null, 2)); }
